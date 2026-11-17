@@ -64,6 +64,7 @@
     <button class="avatar" id="btnAvatar" aria-label="ตั้งค่า"><svg class="i"><use href="#i-user"/></svg></button>
     <canvas id="wave"></canvas>
   </header>
+  <div id="quota"></div>
 
   <!-- ============ TTS PAGE ============ -->
   <section class="page on" data-page="tts">
@@ -143,10 +144,16 @@
 
     <button class="cta" id="btnStart"><span class="bars"><i></i><i></i><i></i><i></i></span><span id="ctaTxt">เริ่มเล่นเสียง</span><span class="prog" id="prog"></span></button>
     <div class="status" id="status"></div>
+    <div class="status" id="est" style="margin-top:-6px"></div>
   </section>
 
   <!-- ============ CLONE PAGE ============ -->
   <section class="page" data-page="clone">
+    <div class="card">
+      <div class="card-h"><h2><svg class="i"><use href="#i-sliders"/></svg>ประมวลผลที่</h2></div>
+      <div class="chips" id="cloneEngine"></div>
+      <p class="hint" id="cloneEst"></p>
+    </div>
     <div class="card">
       <div class="card-h"><h2><svg class="i"><use href="#i-mic"/></svg>1. อัดหรืออัปโหลดเสียงต้นแบบ</h2></div>
       <div class="rec">
@@ -188,7 +195,7 @@
       <div class="editor"><textarea id="imgPrompt" style="min-height:130px" placeholder="เช่น แมวส้มนั่งบนหลังคาวัด ยามพระอาทิตย์ตก แสงอบอุ่น"></textarea></div>
       <label class="lbl2">ตัวสร้างภาพ</label>
       <div class="chips" id="imgEngine"></div>
-      <p class="hint" style="margin-top:6px">FLUX ไม่มีลายน้ำ แต่เข้าใจภาษาอังกฤษดีที่สุด และอาจต้องรอคิว</p>
+      <p class="hint" style="margin-top:6px">FLUX/คอมของฉัน: ไม่มีลายน้ำ (พิมพ์อังกฤษได้ผลดีสุด) · Pollinations: เร็วแต่อาจมีลายน้ำ</p>
       <label class="lbl2">สไตล์</label>
       <div class="chips" id="imgStyle"></div>
       <label class="lbl2">สัดส่วนภาพ</label>
@@ -199,6 +206,7 @@
     </div>
     <button class="cta" id="btnImg"><span class="bars"><i></i><i></i><i></i><i></i></span><span id="imgCtaTxt">สร้างภาพ</span></button>
     <div class="status" id="imgStatus"></div>
+    <div class="status" id="imgEst" style="margin-top:-6px"></div>
     <div class="grid" id="imgGrid"></div>
   </section>
 
@@ -220,8 +228,9 @@
   <button class="nav" data-go="clone"><svg class="i"><use href="#i-mic"/></svg><div>โคลนเสียง<small>สร้างเสียงจากคลิปตัวอย่าง</small></div></button>
   <button class="nav" data-go="image"><svg class="i"><use href="#i-image"/></svg><div>ข้อความเป็นรูปภาพ<small>สร้างภาพด้วย AI ฟรี</small></div></button>
   <button class="nav" data-act="history"><svg class="i"><use href="#i-hist"/></svg><div>ประวัติการใช้งาน</div></button>
+  <button class="nav" data-act="proc"><svg class="i"><use href="#i-sliders"/></svg><div>ประมวลผล & สเปคเครื่อง<small>เลือก API / GPU / CPU / คอมของฉัน</small></div></button>
   <button class="nav" data-act="settings"><svg class="i"><use href="#i-gear"/></svg><div>ตั้งค่า & คีย์ API</div></button>
-  <button class="nav" data-act="install"><svg class="i"><use href="#i-down"/></svg><div>ติดตั้งลงหน้าจอโทรศัพท์</div></button>
+  <button class="nav" data-act="install"><svg class="i"><use href="#i-down"/></svg><div>ติดตั้งเป็นแอป (Android / Mac)</div></button>
   <button class="nav" data-act="about"><svg class="i"><use href="#i-info"/></svg><div>ทำอะไรได้ / ข้อจำกัด</div></button>
 </nav>
 <div class="sheet" id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>

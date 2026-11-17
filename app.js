@@ -36,7 +36,7 @@ const db = (() => {
 const S = Object.assign({
   polKey:'', hfToken:'', space:'pythonlearnreal/F5-TTS-THAI',
   lang:'th', tone:1, style:'natural', rate:1, vol:1, voice:null,
-  imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
+  cloneEngine:'hf', localDev:'auto', serverUrl:'', imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
 
@@ -147,12 +147,13 @@ function go(p){
   $('#pageTitle').textContent = PAGES[p][0]; $('#pageSub').textContent = PAGES[p][1];
   $('#dock').hidden = p !== 'tts'; $('#app').classList.toggle('no-dock', p !== 'tts');
   if (p === 'clone') renderClones();
+  setTimeout(() => { renderQuota(); renderEst(); });
   closeAll(); scrollTo(0,0);
   if (location.hash.slice(1) !== p) history.replaceState(null, '', p === 'tts' ? location.pathname : '#' + p);
 }
 $('#btnMenu').onclick = () => { drawer.classList.add('on'); scrim.classList.add('on'); };
 $$('.nav[data-go]').forEach(n => n.onclick = () => go(n.dataset.go));
-$$('.nav[data-act]').forEach(n => n.onclick = () => ({history:openHistory, settings:openSettings, install:openInstall, about:openAbout})[n.dataset.act]());
+$$('.nav[data-act]').forEach(n => n.onclick = () => ({history:openHistory, settings:openSettings, install:openInstall, about:openAbout, proc:openProc})[n.dataset.act]());
 $('#btnAvatar').onclick = () => openSettings();
 $('#btnPro').onclick = () => openSettings(true);
 
@@ -171,6 +172,7 @@ function onText(){
   const n = ta.value.length, mins = n / (800 * effRate());
   $('#count').textContent = n.toLocaleString('th-TH') + ' ตัวอักษร' + (n ? ` · ~${mins < 1 ? '<1' : Math.round(mins)} นาที` : '');
   LS.set('draft', ta.value);
+  if (typeof renderEst === 'function') try { renderEst(); } catch(e){}
 }
 ta.addEventListener('input', () => { onText(); if (P.state !== 'idle') stopAll(); });
 $('#btnClear').onclick = () => { stopAll(); ta.value = ''; onText(); setTab('text'); ta.focus(); };
@@ -285,6 +287,7 @@ function renderVoice(){
   $('#fToneV').textContent = (TONES.find(t => t[1] === S.tone) || TONES[2])[0];
   $('#fStyleV').textContent = (STYLES[S.style]||STYLES.natural).n;
   $('#dkSave').style.opacity = v.type === 'device' ? .55 : 1;
+  try { renderEst(); renderQuota(); } catch(e){}
 }
 $('#btnVoice').onclick = () => {
   const v = curVoice(); const keyOk = !!S.polKey;
@@ -342,7 +345,7 @@ $('#fTone').onclick = () => optionSheet('โทนเสียง', TONES.map(t 
   v => { S.tone = v; save(); renderVoice(); if (P.state === 'playing' && P.kind === 'device') speakDevice(); });
 $('#fStyle').onclick = () => optionSheet('รูปแบบเสียง', Object.entries(STYLES).map(([k,s]) => ({v:k, n:s.n, d:s.d})), S.style,
   v => { S.style = v; save(); renderVoice(); onText(); });
-$('#fAdv').onclick = () => openSettings();
+$('#fAdv').onclick = () => openProc();
 
 /* ---------------- chunking ---------------- */
 function makeChunks(text, MAX){
@@ -396,6 +399,7 @@ function ui(){
   $('#vic').classList.toggle('speaking', st === 'playing');
   $('#editor').classList.toggle('reading', st !== 'idle');
   wave.set(st === 'playing');
+  try { renderEst(); } catch(e){}
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st === 'playing' ? 'playing' : st === 'paused' ? 'paused' : 'none';
 }
 function prepare(v, text){
@@ -501,42 +505,180 @@ async function playRemote(){
 /* ---------------- engines ---------------- */
 async function synthesize(v, text){
   if (v.type === 'local') return localTTS(text, v.id);
-  if (v.type === 'ai') return pollinationsTTS(text, v.id);
+  if (v.type === 'ai'){ const t0 = performance.now(); const b = await pollinationsTTS(text, v.id); SPEED.learn('ai', (performance.now() - t0) / Math.max(1, text.length)); return b; }
   if (v.type === 'clone') return cloneTTS(text, v.rec);
   throw new Error('เสียงในเครื่องสร้างไฟล์เสียงไม่ได้');
 }
-/* free on-device AI voice: MMS/VITS models via transformers.js in a Web Worker */
+/* ---------------- quota tracking (API engines) ---------------- */
+const QUOTA_NAMES = {
+  pollinations: 'เครดิต Pollinations (คีย์ของคุณ)',
+  polfree: 'Pollinations โหมดฟรี',
+  hf: 'GPU ฟรีของ Hugging Face (โคลนเสียง + FLUX)',
+};
+const Q = {
+  all(){ const q = LS.get('quota', {}), now = Date.now(); let ch = false; for (const k in q) if (q[k].until && q[k].until < now){ delete q[k]; ch = true; } if (ch) LS.set('quota', q); return q; },
+  hit(k){ return this.all()[k] || null; },
+  mark(k, msg, sec, guess){ const q = this.all(); q[k] = {msg, at: Date.now(), until: sec ? Date.now() + sec*1000 : (k === 'pollinations' ? 0 : Date.now() + 30*60000), guess: !sec && k !== 'pollinations'}; LS.set('quota', q); renderQuota(); },
+  clear(k){ const q = this.all(); if (q[k]){ delete q[k]; LS.set('quota', q); renderQuota(); } },
+};
+function fmtDur(sec){
+  sec = Math.max(1, sec);
+  if (sec < 60) return Math.round(sec) + ' วินาที';
+  if (sec < 3600) return Math.round(sec / 60) + ' นาที';
+  return (sec / 3600).toFixed(1).replace(/\.0$/, '') + ' ชั่วโมง';
+}
+function quotaText(k){
+  const q = Q.hit(k); if (!q) return '';
+  let t = `โควตา ${QUOTA_NAMES[k]} หมดแล้ว`;
+  if (k === 'pollinations') t += ' — ต้องเติม Pollen (ซื้อ หรือทำ Quests ที่ enter.pollinations.ai)';
+  else if (q.guess) t += ' — ระบบไม่ได้บอกเวลา ลองใหม่ในอีกสักพัก';
+  else t += ` — ใช้ได้อีกในประมาณ ${fmtDur((q.until - Date.now()) / 1000)}`;
+  return t;
+}
+function curPage(){ return $$('.page').find(p => p.classList.contains('on'))?.dataset.page || 'tts'; }
+function renderQuota(){
+  const box = $('#quota'); if (!box) return;
+  try { renderEngines(); } catch(e){}
+  const page = curPage(), ks = [];
+  if (page === 'tts'){ const v = curVoice(); if (v.type === 'ai') ks.push('pollinations'); if (v.type === 'clone' && S.cloneEngine !== 'server') ks.push('hf'); }
+  if (page === 'clone' && S.cloneEngine !== 'server') ks.push('hf');
+  if (page === 'image'){ if (S.imgEngine === 'flux') ks.push('hf'); if (S.imgEngine === 'pol') ks.push(S.polKey && !Q.hit('pollinations') ? 'pollinations' : 'polfree'); if (S.imgEngine === 'pol' && S.polKey) ks.push('pollinations'); }
+  const hits = [...new Set(ks)].filter(k => Q.hit(k));
+  box.innerHTML = hits.map(k => {
+    const acts = [];
+    if (page === 'tts' && k === 'pollinations') acts.push(['local', 'ใช้เสียง AI ฟรีในเครื่อง']);
+    if (k === 'hf' && page !== 'image') acts.push(['cloneServer', 'ใช้คอมของฉัน']);
+    if (k === 'hf' && page === 'image'){ acts.push(['imgPol', 'ใช้ Pollinations']); acts.push(['imgServer', 'ใช้คอมของฉัน']); }
+    if (page === 'image' && k !== 'hf' && !Q.hit('hf')) acts.push(['imgFlux', 'ใช้ FLUX']);
+    return `<div class="qbar"><b>⚠️ ${esc(quotaText(k))}</b><div class="row2" style="flex-wrap:wrap;margin-top:8px">${acts.map(a => `<button class="btn sm alt" data-q="${a[0]}">${a[1]}</button>`).join('')}<button class="btn sm alt" data-q="proc">ดูตัวเลือก</button></div></div>`;
+  }).join('');
+  box.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+    const a = b.dataset.q;
+    if (a === 'local'){ const l = LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0]; S.voice = {type:'local', id:l[0]}; }
+    if (a === 'cloneServer' || a === 'imgServer'){ if (!S.serverUrl) return openProc(); if (a === 'cloneServer') S.cloneEngine = 'server'; else S.imgEngine = 'server'; }
+    if (a === 'imgPol') S.imgEngine = 'pol';
+    if (a === 'imgFlux') S.imgEngine = 'flux';
+    if (a === 'proc') return openProc();
+    save(); stopAll(); renderEngines(); renderVoice(); renderQuota(); toast('สลับแล้ว');
+  });
+}
+setInterval(renderQuota, 30000);
+
+/* ---------------- device spec + time estimates ---------------- */
+let SPEC = null;
+async function getSpec(){
+  if (SPEC) return SPEC;
+  const ua = navigator.userAgent, mobile = /Android|iPhone|iPad|Mobile/i.test(ua) || (navigator.maxTouchPoints > 1 && /Macintosh/.test(ua) && 'ontouchend' in document);
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) || (mobile && /Macintosh/.test(ua)) ? 'iOS/iPadOS' : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'อื่น ๆ';
+  let gpu = null;
+  try { if (navigator.gpu){ const ad = await navigator.gpu.requestAdapter(); if (ad){ const i = ad.info || (ad.requestAdapterInfo ? await ad.requestAdapterInfo() : {}); gpu = {vendor: i.vendor || '', arch: i.architecture || '', desc: i.description || ''}; } } } catch(e){}
+  const apple = os === 'macOS' && !!gpu && /apple|metal/i.test(gpu.vendor + ' ' + gpu.arch);
+  SPEC = {mobile, os, cores: navigator.hardwareConcurrency || 4, mem: navigator.deviceMemory || null, gpu, apple, net: navigator.connection?.downlink || null};
+  return SPEC;
+}
+getSpec().then(() => { renderEst(); });
+const SPEED = {
+  get(k){ return LS.get('speed', {})[k]; },
+  learn(k, v){ if (!isFinite(v) || v <= 0) return; const s = LS.get('speed', {}); s[k] = s[k] ? s[k]*0.6 + v*0.4 : v; LS.set('speed', s); },
+};
+let SERVER_INFO = LS.get('serverInfo', null);
+function localDev(){ return S.localDev === 'wasm' ? 'wasm' : S.localDev === 'webgpu' ? 'webgpu' : (SPEC?.gpu ? 'webgpu' : 'wasm'); }
+function engineKey(v){ return v.type === 'local' ? 'local-' + localDev() : v.type === 'ai' ? 'ai' : v.type === 'clone' ? 'clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf') : 'device'; }
+function defMs(k){
+  const sp = SPEC || {mobile:true, cores:4};
+  const sd = SERVER_INFO?.device;
+  switch (k){
+    case 'local-webgpu': return sp.mobile ? 18 : sp.apple ? 5 : 7;
+    case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
+    case 'ai': return 12;
+    case 'clone-hf': return 60;
+    case 'clone-server': return SERVER_INFO?.tts_ms_per_char || (sd === 'cuda' ? 15 : sd === 'mps' ? 110 : 500);
+    case 'img-flux': return 12000;
+    case 'img-pol': return 9000;
+    case 'img-server': return SERVER_INFO?.img_ms || (sd === 'cuda' ? 1500 : sd === 'mps' ? 6000 : 45000);
+  }
+  return 50;
+}
+function speedOf(k){ const m = SPEED.get(k); return {v: m || defMs(k), measured: !!m}; }
+function whereLabel(k){
+  return ({'local-webgpu':'GPU ในเครื่องนี้', 'local-wasm':'CPU ในเครื่องนี้', 'ai':'API Pollinations', 'clone-hf':'API Hugging Face', 'clone-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : ''),
+    'img-flux':'API FLUX (Hugging Face)', 'img-pol':'API Pollinations', 'img-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : '')})[k] || k;
+}
+function estimateVoice(v, chars){
+  const listen = chars / 13.3 / effRate();
+  if (v.type === 'device') return {first: 0, total: 0, listen, text: `⏱ เริ่มอ่านทันที · ฟังจบประมาณ ${fmtDur(listen)} · เสียงในเครื่อง`};
+  const k = engineKey(v), sp = speedOf(k), firstChars = Math.min(chars, v.type === 'local' ? 140 : 300);
+  let over = 0, note = '';
+  if (v.type === 'local' && !LS.get('dl.' + v.id, false)){ over = 110 * 8 / Math.max(SPEC?.net || 10, 8) + 5; note = ` · ครั้งแรกโหลดโมเดล ~${fmtDur(over)}`; }
+  if (k === 'ai') over = 2;
+  if (k === 'clone-hf'){ over = 20; note = ' · อาจต้องรอคิวเพิ่ม'; }
+  if (k === 'clone-server' && SERVER_INFO && !SERVER_INFO.tts_loaded){ over = 40; note = ' · ครั้งแรกคอมต้องโหลดโมเดล'; }
+  const first = over + firstChars * sp.v / 1000, total = over + chars * sp.v / 1000;
+  const slow = sp.v > 75 / effRate() ? ' · สร้างช้ากว่าเสียงที่เล่น อาจหยุดรอเป็นช่วง ๆ' : '';
+  return {first, total, listen, text: `⏱ เริ่มได้ยินใน ~${fmtDur(first)} · สร้างทั้งหมด ~${fmtDur(total)} · ${whereLabel(k)}${note}${slow} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}`};
+}
+function estimateImages(n){
+  const k = 'img-' + S.imgEngine, sp = speedOf(k);
+  let each = sp.v / 1000, extra = 0;
+  if (k === 'img-pol' && !S.polKey) extra = (n - 1) * 15;
+  if (k === 'img-flux') extra = 10;
+  if (k === 'img-server' && SERVER_INFO && !SERVER_INFO.img_loaded) extra = 60;
+  return {each, total: each * n + extra, text: `⏱ ประมาณ ${fmtDur(each)}/ภาพ · ${n} ภาพ ~${fmtDur(each * n + extra)} · ${whereLabel(k)} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}`};
+}
+function renderEst(){
+  const chars = ta.value.trim().length;
+  if ($('#est')) $('#est').textContent = chars && P.state === 'idle' ? estimateVoice(curVoice(), chars).text : '';
+  if ($('#imgEst')) $('#imgEst').textContent = estimateImages(S.imgCount).text;
+  if ($('#cloneEst')) $('#cloneEst').textContent = `⏱ ประโยคทดสอบ ~${fmtDur((S.cloneEngine === 'server' ? 0 : 20) + 45 * speedOf('clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf')).v / 1000)} · ${whereLabel('clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf'))}`;
+}
+
+/* ---------------- free on-device AI voice (transformers.js, WebGPU or CPU) ---------------- */
 const TTS_WORKER = `
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
 env.allowLocalModels = false;
 const pipes = {};
+let gpuOk = null;
+async function hasGpu(){ if (gpuOk !== null) return gpuOk; try { gpuOk = !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch (e) { gpuOk = false; } return gpuOk; }
+function load(model, device){
+  const k = model + '|' + device;
+  pipes[k] ||= pipeline('text-to-speech', model, { dtype: 'fp32', device,
+    progress_callback: p => { if (p.status === 'progress' && /onnx/.test(p.file || '')) self.postMessage({ progress: p.progress }); } })
+    .catch(e => { pipes[k] = null; throw e; });
+  return pipes[k];
+}
+async function run(model, device, text){ const tts = await load(model, device); const t0 = performance.now(); const out = await tts(text); return { out, ms: performance.now() - t0 }; }
 self.onmessage = async e => {
-  const { id, model, text } = e.data;
+  const { id, model, text, want } = e.data;
+  let device = want === 'wasm' ? 'wasm' : (await hasGpu()) ? 'webgpu' : 'wasm';
   try {
-    pipes[model] ||= pipeline('text-to-speech', model, { dtype: 'fp32', device: 'wasm',
-      progress_callback: p => { if (p.status === 'progress' && /onnx/.test(p.file || '')) self.postMessage({ id, progress: p.progress }); } });
-    const tts = await pipes[model];
-    const out = await tts(text);
-    self.postMessage({ id, audio: out.audio, rate: out.sampling_rate }, [out.audio.buffer]);
-  } catch (err) { pipes[model] = null; self.postMessage({ id, error: String((err && err.message) || err) }); }
+    let r;
+    try { r = await run(model, device, text); }
+    catch (err) { if (device !== 'webgpu' || want === 'webgpu') throw err; device = 'wasm'; r = await run(model, device, text); }
+    self.postMessage({ id, device, ms: r.ms, audio: r.out.audio, rate: r.out.sampling_rate }, [r.out.audio.buffer]);
+  } catch (err) { self.postMessage({ id, device, error: String((err && err.message) || err) }); }
 };`;
 let ttsWorker = null, ttsSeq = 0; const ttsJobs = {};
 function getWorker(){
   if (ttsWorker) return ttsWorker;
   ttsWorker = new Worker(URL.createObjectURL(new Blob([TTS_WORKER], {type:'text/javascript'})), {type:'module'});
   ttsWorker.onmessage = e => {
-    const d = e.data, job = ttsJobs[d.id]; if (!job) return;
+    const d = e.data;
     if (d.progress != null){ status(`กำลังดาวน์โหลดโมเดลเสียง ${Math.round(d.progress)}% — ครั้งแรกครั้งเดียว ใช้ Wi-Fi จะเร็วกว่า`); return; }
-    delete ttsJobs[d.id];
-    d.error ? job.rej(new Error('เสียง AI ในเครื่องล้มเหลว: ' + d.error)) : job.res(encodeWav([d.audio], d.rate));
+    const job = ttsJobs[d.id]; if (!job) return; delete ttsJobs[d.id];
+    if (d.error) return job.rej(new Error(`เสียง AI ในเครื่อง (${d.device === 'webgpu' ? 'GPU' : 'CPU'}) ล้มเหลว: ` + d.error + (d.device === 'webgpu' ? ' — ลองเปลี่ยนเป็น CPU ในหน้า ประมวลผล' : '')));
+    LS.set('dl.' + job.model, true); P.lastDev = d.device;
+    if (!job.first) SPEED.learn('local-' + d.device, d.ms / Math.max(1, job.chars));
+    job.res(encodeWav([d.audio], d.rate));
   };
   ttsWorker.onerror = e => { Object.values(ttsJobs).forEach(j => j.rej(new Error('โหลดตัวประมวลผลเสียงไม่ได้ — ตรวจอินเทอร์เน็ต หรือเบราว์เซอร์อาจเก่าเกินไป (' + (e.message || 'worker error') + ')'))); for (const k in ttsJobs) delete ttsJobs[k]; ttsWorker = null; };
   return ttsWorker;
 }
+const warmModels = new Set();
 function localTTS(text, model){
   const clean = text.replace(/[“”"«»()[\]{}<>*_#~|]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!clean) return Promise.resolve(encodeWav([new Float32Array(1600)], 16000));
-  return new Promise((res, rej) => { const id = ++ttsSeq; ttsJobs[id] = {res, rej}; getWorker().postMessage({id, model, text: clean}); });
+  const first = !warmModels.has(model + localDev()); warmModels.add(model + localDev());
+  return new Promise((res, rej) => { const id = ++ttsSeq; ttsJobs[id] = {res, rej, model, chars: clean.length, first}; getWorker().postMessage({id, model, text: clean, want: S.localDev || 'auto'}); });
 }
 
 async function pollinationsTTS(text, voice){
@@ -546,31 +688,54 @@ async function pollinationsTTS(text, voice){
     r = await fetch(`https://gen.pollinations.ai/audio/${encodeURIComponent(text)}?voice=${voice}` + (k ? `&key=${encodeURIComponent(k)}` : ''));
     if (!r.ok){
       detail = await r.text().catch(() => '');
-      r = await fetch('https://gen.pollinations.ai/v1/audio/speech', {method:'POST', headers:{'Content-Type':'application/json', ...(k ? {Authorization:'Bearer ' + k} : {})}, body: JSON.stringify({model:'openai/tts-1', input:text, voice})});
+      if (r.status !== 402 && !/pollen|balance|credit/i.test(detail))
+        r = await fetch('https://gen.pollinations.ai/v1/audio/speech', {method:'POST', headers:{'Content-Type':'application/json', ...(k ? {Authorization:'Bearer ' + k} : {})}, body: JSON.stringify({model:'openai/tts-1', input:text, voice})});
     }
   } catch(e){ throw new Error('เชื่อมต่อบริการเสียง AI ไม่ได้ — ตรวจอินเทอร์เน็ต'); }
   if (!r.ok){
-    detail = (await r.text().catch(() => '')) || detail;
-    if (r.status === 401 || r.status === 403 || (!k && /key|auth/i.test(detail))) throw new Error(/pollen|balance|credit/i.test(detail) ? 'Pollen ในบัญชี Pollinations หมด — เลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทนได้เลย' : 'ต้องใส่คีย์ Pollinations ก่อน — หรือเลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทน');
-    if (r.status === 402 || /pollen|balance|credit/i.test(detail)) throw new Error('Pollen ในบัญชี Pollinations หมด — เลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทนได้เลย');
-    if (r.status === 429) throw new Error('เรียกถี่เกินไป รอสักครู่แล้วลองใหม่');
+    detail = (await r.clone().text().catch(() => '')) || detail;
+    if (r.status === 402 || /pollen|balance|credit|insufficient/i.test(detail)){ Q.mark('pollinations', detail.slice(0, 200), 0); throw new Error(quotaText('pollinations') + ' · เลือก “เสียง AI ฟรีในเครื่อง” แทนได้'); }
+    if (r.status === 401 || r.status === 403) throw new Error(k ? 'คีย์ Pollinations ไม่ถูกต้อง — ตรวจในตั้งค่า' : 'ต้องใส่คีย์ Pollinations ก่อน — หรือเลือก “เสียง AI ฟรีในเครื่อง” แทน');
+    if (r.status === 429){ const ra = +r.headers.get('retry-after') || 60; Q.mark('pollinations', 'rate limit', ra); throw new Error(quotaText('pollinations')); }
     throw new Error(`เสียง AI ล้มเหลว (${r.status}) ${detail.slice(0,120)}`);
   }
+  Q.clear('pollinations');
   const b = await r.blob();
   if (b.size < 800) throw new Error('ได้ไฟล์เสียงว่างเปล่า ลองใหม่อีกครั้ง');
   return b.type ? b : new Blob([b], {type:'audio/mpeg'});
 }
 
-/* voice cloning via Hugging Face Space (F5-TTS) */
-let gradio = null, gClient = null, gSpace = '', gPlan = null;
+/* ---------------- Gradio connections: Hugging Face Spaces or "my computer" server ---------------- */
+let gradio = null; const GC = {};
 const plabel = p => ((p.label || '') + ' ' + (p.parameter_name || '')).toLowerCase();
-async function getClient(){
-  const space = S.space.trim();
-  if (gClient && gSpace === space + S.hfToken) return gClient;
-  gradio ||= await import('https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js');
-  try { gClient = await gradio.Client.connect(space, S.hfToken ? {hf_token: S.hfToken.trim()} : {}); }
-  catch(e){ throw new Error(`เชื่อมต่อ Space “${space}” ไม่ได้ — อาจกำลังหลับ/ปิดอยู่ ลองใหม่ใน 1–2 นาที หรือเปลี่ยน Space ในตั้งค่า (${e.message || e})`); }
-  gSpace = space + S.hfToken; gPlan = null; return gClient;
+const isUrl = t => /^https?:\/\//.test(t);
+async function gconnect(target){
+  if (!target) throw new Error('ยังไม่ได้ตั้งค่า “คอมของฉัน” — ไปที่ ขั้นสูง › ประมวลผล');
+  const key = target + '|' + (isUrl(target) ? '' : S.hfToken);
+  if (GC[key]) return GC[key];
+  try { gradio ||= await import('https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js'); }
+  catch(e){ throw new Error('โหลดตัวเชื่อมต่อไม่ได้ — ตรวจอินเทอร์เน็ต'); }
+  try {
+    const client = await gradio.Client.connect(target, (!isUrl(target) && S.hfToken) ? {hf_token: S.hfToken.trim()} : {});
+    return GC[key] = {client, plans: {}};
+  } catch(e){
+    throw new Error(isUrl(target) ? `เชื่อมต่อคอมของฉันไม่ได้ — ตรวจว่าเปิดเซิร์ฟเวอร์อยู่ และลิงก์ยังไม่หมดอายุ (${e.message || e})` : `เชื่อมต่อ ${target} ไม่ได้ — Space อาจกำลังหลับ ลองใหม่ใน 1–2 นาที (${e.message || e})`);
+  }
+}
+function gradioErr(e, target, what){
+  const m = String(e?.message || e?.title || (typeof e === 'object' ? JSON.stringify(e) : e));
+  if (!isUrl(target) && /quota|ZeroGPU|exceeded|GPU (task|duration)/i.test(m)){
+    const t = m.match(/(\d+):(\d{2}):(\d{2})/), s2 = m.match(/(\d+)\s*s(?:ec|econds?)?\b.*(?:left|retry|again)/i);
+    const sec = t ? (+t[1])*3600 + (+t[2])*60 + (+t[3]) : null;
+    Q.mark('hf', m.slice(0, 200), sec);
+    return new Error(quotaText('hf') + ' · สลับไปใช้คอมของฉัน หรือใส่ HF token ในตั้งค่าเพื่อได้โควตาเพิ่ม');
+  }
+  return new Error(what + 'ล้มเหลว: ' + m.slice(0, 160));
+}
+async function serverInfo(){
+  const g = await gconnect(S.serverUrl);
+  const r = await g.client.predict('/info', []);
+  SERVER_INFO = JSON.parse(r.data[0]); LS.set('serverInfo', SERVER_INFO); return SERVER_INFO;
 }
 function planFromApi(api){
   let best = null, bs = -1e9;
@@ -582,7 +747,7 @@ function planFromApi(api){
     if (au.length !== 1 || !tx.length || !ra) continue;
     let s = 0;
     if (/tts|infer|synth|generat|clone|predict/i.test(name)) s += 3;
-    if (/basic/i.test(name)) s += 2;
+    if (/basic|clone_tts/i.test(name)) s += 2;
     if (/multi|podcast|chat|style|emotion|switch|load|update|transcri|speech_type|add/i.test(name)) s -= 6;
     s -= ps.length * 0.1;
     if (s > bs){ bs = s; best = {name, ps}; }
@@ -595,32 +760,34 @@ function planFromApi(api){
   if (!ref && texts.length > 1) ref = texts.find(p => p !== gen);
   return {name: best.name, ps: best.ps, ref, gen};
 }
+const cloneTarget = () => S.cloneEngine === 'server' ? S.serverUrl : S.space.trim();
 async function cloneTTS(text, rec){
   if (!rec) throw new Error('ไม่พบเสียงโคลนนี้แล้ว');
-  const c = await getClient();
-  if (!gPlan){ gPlan = planFromApi(await c.view_api()); if (!gPlan) throw new Error('Space นี้ไม่มีช่อง “เสียงต้นแบบ + ข้อความ → เสียง” ให้เรียกใช้'); }
-  const args = gPlan.ps.map(p => {
+  const target = cloneTarget();
+  if (!isUrl(target) && Q.hit('hf')) throw new Error(quotaText('hf'));
+  const g = await gconnect(target), c = g.client;
+  if (!g.plans.clone){ g.plans.clone = planFromApi(await c.view_api()); if (!g.plans.clone) throw new Error('ปลายทางนี้ไม่มีช่อง “เสียงต้นแบบ + ข้อความ → เสียง” ให้เรียกใช้'); }
+  const plan = g.plans.clone;
+  const args = plan.ps.map(p => {
     if (/audio|file/i.test(p.component)) return gradio.handle_file(rec.blob);
-    if (p === gPlan.gen) return text;
-    if (p === gPlan.ref) return rec.refText || '';
+    if (p === plan.gen) return text;
+    if (p === plan.ref) return rec.refText || '';
     if (/speed/.test(plabel(p)) && /slider|number/i.test(p.component)) return 1;
     if (p.parameter_has_default) return p.parameter_default;
     if (p.example_input !== undefined) return p.example_input;
     if (/checkbox/i.test(p.component)) return false;
     return null;
   });
+  const t0 = performance.now();
   let res;
-  try { res = await c.predict(gPlan.name, args); }
-  catch(e){
-    const m = String(e?.message || e?.title || JSON.stringify(e));
-    if (/quota|ZeroGPU|GPU/i.test(m)) throw new Error('โควตา GPU ฟรีของ Hugging Face หมดชั่วคราว — รอสักพัก หรือใส่ HF token ในตั้งค่าเพื่อได้โควตาเพิ่ม');
-    throw new Error('โคลนเสียงล้มเหลว: ' + m.slice(0, 160));
-  }
+  try { res = await c.predict(plan.name, args); } catch(e){ throw gradioErr(e, target, 'โคลนเสียง'); }
+  if (!isUrl(target)) Q.clear('hf');
+  SPEED.learn(isUrl(target) ? 'clone-server' : 'clone-hf', (performance.now() - t0) / Math.max(1, text.length));
   const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url || x.path));
   const url = typeof out === 'string' ? out : (out?.url || (out?.path && `${c.config?.root || ''}/file=${out.path}`));
-  if (!url) throw new Error('Space ไม่ได้ส่งไฟล์เสียงกลับมา');
-  const r = await fetch(url, S.hfToken ? {headers:{Authorization:'Bearer ' + S.hfToken.trim()}} : {});
-  if (!r.ok) throw new Error('ดาวน์โหลดเสียงจาก Space ไม่ได้ (' + r.status + ')');
+  if (!url) throw new Error('ปลายทางไม่ได้ส่งไฟล์เสียงกลับมา');
+  const r = await fetch(url, (!isUrl(target) && S.hfToken) ? {headers:{Authorization:'Bearer ' + S.hfToken.trim()}} : {});
+  if (!r.ok) throw new Error('ดาวน์โหลดเสียงไม่ได้ (' + r.status + ')');
   return r.blob();
 }
 
@@ -752,21 +919,84 @@ function openSettings(pro){
     el.querySelector('#kSave').onclick = () => { apply(); renderVoice(); closeAll(); toast('บันทึกแล้ว'); };
     el.querySelector('#kTest').onclick = async () => {
       apply(); const m = el.querySelector('#kMsg'); m.textContent = 'กำลังเชื่อมต่อ ' + S.space + '…';
-      try { const c = await getClient(); gPlan = planFromApi(await c.view_api());
-        m.innerHTML = gPlan ? `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ใช้ endpoint ${esc(gPlan.name)}</span>` : '<span style="color:var(--err)">เชื่อมต่อได้ แต่ไม่พบช่องโคลนเสียง</span>';
+      try { const g = await gconnect(S.space.trim()); const plan = g.plans.clone = planFromApi(await g.client.view_api());
+        m.innerHTML = plan ? `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ใช้ endpoint ${esc(plan.name)}</span>` : '<span style="color:var(--err)">เชื่อมต่อได้ แต่ไม่พบช่องโคลนเสียง</span>';
       } catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
     };
     el.querySelector('#kClrH').onclick = async () => { await db.clear('history'); toast('ล้างประวัติแล้ว'); };
     el.querySelector('#kClrC').onclick = async () => { await db.clear('clones'); clones = []; if (S.voice?.type === 'clone') S.voice = null; save(); renderVoice(); toast('ลบเสียงโคลนแล้ว'); };
   });
 }
+/* ---------------- processing: API vs this device vs my computer ---------------- */
+function renderEngines(){
+  const hfOut = Q.hit('hf') ? ' · โควตาหมด' : '';
+  chips($('#imgEngine'), [['flux','FLUX · ไม่มีลายน้ำ' + hfOut],['pol','Pollinations' + (Q.hit(S.polKey ? 'pollinations' : 'polfree') ? ' · โควตาหมด' : '')],['server','คอมของฉัน']], S.imgEngine, v => { S.imgEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); });
+  chips($('#cloneEngine'), [['hf','API Hugging Face' + hfOut],['server','คอมของฉัน']], S.cloneEngine, v => { S.cloneEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); renderVoice(); });
+}
+async function openProc(){
+  const sp = await getSpec();
+  const gpuTxt = sp.gpu ? `มี (WebGPU${sp.gpu.vendor ? ' · ' + esc(sp.gpu.vendor) : ''}${sp.gpu.arch ? ' ' + esc(sp.gpu.arch) : ''})` : 'ไม่รองรับในเบราว์เซอร์นี้ (ใช้ CPU แทน)';
+  const est = (k, chars) => { const v = speedOf(k); return `~${fmtDur(chars * v.v / 1000)}${v.measured ? ' (วัดจริง)' : ''}`; };
+  const imgE = k => { const v = speedOf(k); return `~${fmtDur(v.v / 1000)}/ภาพ${v.measured ? ' (วัดจริง)' : ''}`; };
+  const opt = (grp, val, cur, title, sub, dis) => `<button class="opt ${val === cur ? 'on' : ''}" data-g="${grp}" data-v="${val}" ${dis ? 'disabled style="opacity:.45"' : ''}><span class="dot"></span><span class="t"><b>${title}</b><small>${sub}</small></span></button>`;
+  const qtag = k => Q.hit(k) ? ` <span class="tag warn">โควตาหมด</span>` : '';
+  openSheet(sheetHead('ประมวลผล & สเปคเครื่อง') + `
+    <div class="item" style="display:block"><b>เครื่องนี้: ${esc(sp.os)}${sp.mobile ? ' (มือถือ/แท็บเล็ต)' : ''}</b>
+      <small style="display:block;color:var(--mut);margin-top:4px;line-height:1.7">CPU ${sp.cores} คอร์ · RAM ${sp.mem ? '~' + sp.mem + ' GB' : 'ไม่ทราบ (เบราว์เซอร์ไม่บอก)'}<br>GPU: ${gpuTxt}${sp.net ? '<br>เน็ตประมาณ ' + sp.net + ' Mbps' : ''}</small></div>
+    <p class="hint">เวลาด้านล่างคิดจากข้อความ 1,000 ตัวอักษร (ฟังประมาณ 1.3 นาที) — เป็นค่าประมาณจากสเปค และจะแม่นขึ้นเองหลังใช้งานจริง</p>
+    <h4>เสียง AI ฟรีในเครื่อง — ประมวลผลบน</h4>
+    ${opt('localDev','auto',S.localDev || 'auto','อัตโนมัติ (แนะนำ)', 'ใช้ GPU ถ้ามี ไม่งั้นใช้ CPU · ' + est('local-' + (sp.gpu ? 'webgpu' : 'wasm'), 1000))}
+    ${opt('localDev','webgpu',S.localDev,'GPU (WebGPU)', sp.gpu ? 'เร็วที่สุด · ' + est('local-webgpu', 1000) : 'เบราว์เซอร์นี้ไม่รองรับ', !sp.gpu)}
+    ${opt('localDev','wasm',S.localDev,'CPU', 'ช้ากว่าแต่เสถียร ใช้ได้ทุกเครื่อง · ' + est('local-wasm', 1000))}
+    <p class="hint">เสียง AI แบบ API (Pollinations): ${est('ai', 1000)}${qtag('pollinations')}</p>
+    <h4>โคลนเสียง — ใช้</h4>
+    ${opt('cloneEngine','hf',S.cloneEngine,'API Hugging Face (ฟรี มีโควตา)' + qtag('hf'), est('clone-hf', 1000) + ' + รอคิว · ' + (Q.hit('hf') ? esc(quotaText('hf')) : 'ไม่ต้องติดตั้งอะไร'))}
+    ${opt('cloneEngine','server',S.cloneEngine,'คอมของฉัน (ใช้ GPU ของ Mac/PC)', S.serverUrl ? est('clone-server', 1000) + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน (ดูด้านล่าง)')}
+    <p class="hint">โคลนเสียงรันในมือถือ/เบราว์เซอร์ไม่ได้ เพราะโมเดลใหญ่หลาย GB</p>
+    <h4>สร้างภาพ — ใช้</h4>
+    ${opt('imgEngine','flux',S.imgEngine,'API FLUX (ไม่มีลายน้ำ)' + qtag('hf'), imgE('img-flux') + ' + รอคิว')}
+    ${opt('imgEngine','pol',S.imgEngine,'API Pollinations' + qtag(S.polKey ? 'pollinations' : 'polfree'), imgE('img-pol') + (S.polKey ? '' : ' · ไม่มีคีย์: รอ 15 วิ/ภาพ อาจมีลายน้ำ'))}
+    ${opt('imgEngine','server',S.imgEngine,'คอมของฉัน (SD-Turbo, ไม่มีลายน้ำ)', S.serverUrl ? imgE('img-server') + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน')}
+    <h4>คอมของฉัน (Mac / PC)</h4>
+    <div class="row2"><input class="inp" id="srvUrl" placeholder="https://xxxx.gradio.live" value="${esc(S.serverUrl)}" autocomplete="off"><button class="btn" id="srvTest">เชื่อม</button></div>
+    <p class="hint" id="srvMsg">${SERVER_INFO && S.serverUrl ? `ล่าสุด: ${esc(SERVER_INFO.chip || '')} · ${esc(SERVER_INFO.device)} · RAM ${SERVER_INFO.ram_gb || '?'} GB` : ''}</p>
+    <ol class="lim" style="padding-left:18px;font-size:13.5px">
+      <li>บน Mac: ติดตั้ง <b>Homebrew</b> แล้วรัน <code>brew install python@3.11 ffmpeg git</code></li>
+      <li><code>git clone https://github.com/mengnattawitmarin/ai-voice</code></li>
+      <li><code>cd ai-voice/server && ./start-mac.sh</code> (ครั้งแรกติดตั้ง+โหลดโมเดลหลาย GB)</li>
+      <li>สแกน QR ที่ขึ้นในหน้าต่าง Terminal ด้วยมือถือ หรือคัดลอกลิงก์ <code>https://…gradio.live</code> มาวางด้านบน</li>
+    </ol>
+    <p class="hint">Mac รุ่น M1/M2/M3 ใช้ GPU ผ่าน Metal อัตโนมัติ · ลิงก์ gradio.live เปลี่ยนทุกครั้งที่เปิดเซิร์ฟเวอร์ใหม่ (สแกน QR ใหม่) · ต้องเปิดคอมค้างไว้ตอนใช้</p>
+    <button class="btn alt sm" id="toKeys" style="margin-top:6px">ตั้งค่าคีย์ API…</button>`,
+  el => {
+    el.querySelectorAll('.opt[data-g]').forEach(b => b.onclick = () => {
+      if (b.disabled) return;
+      const g = b.dataset.g, v = b.dataset.v;
+      if (v === 'server' && !S.serverUrl){ toast('วางลิงก์คอมของฉันด้านล่างก่อน'); el.querySelector('#srvUrl').focus(); }
+      S[g] = v; save();
+      el.querySelectorAll(`.opt[data-g="${g}"]`).forEach(x => x.classList.toggle('on', x === b));
+      renderEngines(); renderVoice(); renderQuota();
+    });
+    el.querySelector('#srvTest').onclick = async () => {
+      const m = el.querySelector('#srvMsg'); let u = el.querySelector('#srvUrl').value.trim().replace(/\/+$/, '');
+      if (u && !isUrl(u)) u = 'https://' + u;
+      S.serverUrl = u; save(); if (!u){ m.textContent = ''; return; }
+      m.textContent = 'กำลังเชื่อมต่อ…';
+      try { const i = await serverInfo(); m.innerHTML = `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ${esc(i.chip || '')} · ${esc(i.device === 'mps' ? 'GPU Apple (Metal)' : i.device === 'cuda' ? 'GPU NVIDIA' : 'CPU')} · RAM ${i.ram_gb || '?'} GB</span>`; renderEst(); }
+      catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
+    };
+    el.querySelector('#toKeys').onclick = () => openSettings();
+  });
+}
 let installEvt = null;
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
 function openInstall(){
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  openSheet(sheetHead('ติดตั้งลงหน้าจอโทรศัพท์') + (standalone ? '<p class="lim">ติดตั้งแล้ว ✓ เปิดจากไอคอนบนหน้าจอได้เลย</p>' : `
+  openSheet(sheetHead('ติดตั้งเป็นแอป (Android / Mac)') + (standalone ? '<p class="lim">ติดตั้งแล้ว ✓ เปิดจากไอคอนบนหน้าจอได้เลย</p>' : `
     ${installEvt ? '<button class="btn" style="width:100%" id="doInstall">ติดตั้งแอป</button>' : ''}
     <ol class="lim"><li><b>Android (Chrome):</b> แตะ ⋮ มุมขวาบน → <b>ติดตั้งแอป</b> หรือ <b>เพิ่มลงในหน้าจอหลัก</b></li>
+    <li><b>MacBook (Chrome):</b> ⋮ → <b>แคสต์ บันทึก และแชร์</b> → <b>ติดตั้งหน้าเว็บเป็นแอป</b> (หรือไอคอนติดตั้งท้ายช่อง URL)</li>
+    <li><b>MacBook (Safari, macOS 14+):</b> เมนู <b>ไฟล์</b> → <b>เพิ่มไปยัง Dock</b></li>
     <li><b>iPhone (Safari):</b> แตะปุ่มแชร์ <span style="font-size:18px">⎋</span> → <b>เพิ่มไปยังหน้าจอโฮม</b></li></ol>
     <p class="hint">หลังติดตั้งจะเปิดเต็มจอเหมือนแอปทั่วไป และหน้าแอปเปิดได้แม้ออฟไลน์ (เสียงในเครื่องใช้ออฟไลน์ได้ ส่วนเสียง AI/รูปภาพต้องมีเน็ต)</p>`),
   el => el.querySelector('#doInstall')?.addEventListener('click', async () => { installEvt.prompt(); await installEvt.userChoice; installEvt = null; closeAll(); }));
@@ -870,7 +1100,7 @@ function chips(box, opts, cur, onPick){
   box.innerHTML = opts.map(o => `<button class="chip ${o[0] == cur ? 'on' : ''}" data-v="${o[0]}">${o[1]}</button>`).join('');
   box.querySelectorAll('.chip').forEach(b => b.onclick = () => { box.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset.v); save(); });
 }
-chips($('#imgEngine'), [['flux','FLUX · ไม่มีลายน้ำ'],['pol','Pollinations · เร็ว']], S.imgEngine, v => S.imgEngine = v);
+renderEngines();
 chips($('#imgStyle'), IMG_STYLES, S.imgStyle, v => S.imgStyle = v);
 chips($('#imgRatio'), RATIOS.map(r => [r[0], r[0]]), S.imgRatio, v => S.imgRatio = v);
 chips($('#imgCount'), [[1,'1 ภาพ'],[2,'2 ภาพ'],[3,'3 ภาพ'],[4,'4 ภาพ']], S.imgCount, v => { S.imgCount = +v; $('#imgGrid').classList.toggle('one', S.imgCount === 1); });
@@ -900,47 +1130,61 @@ function shotActions(div, url, prompt){
   };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
-/* FLUX.1-schnell on a Hugging Face Space: free, no watermark (uses free GPU quota) */
+/* image via Gradio: FLUX.1-schnell on Hugging Face (free, no watermark) or "my computer" (SD-Turbo) */
 const FLUX_SPACE = 'black-forest-labs/FLUX.1-schnell';
-let fluxClient = null, fluxPlan = null;
-async function fluxImage(prompt, seed){
-  gradio ||= await import('https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js');
-  if (!fluxClient){
-    try { fluxClient = await gradio.Client.connect(FLUX_SPACE, S.hfToken ? {hf_token: S.hfToken.trim()} : {}); }
-    catch(e){ throw new Error('เชื่อมต่อ FLUX บน Hugging Face ไม่ได้ (Space อาจกำลังหลับ)'); }
-  }
-  if (!fluxPlan){
-    const api = await fluxClient.view_api();
+async function gradioImage(target, prompt, seed){
+  const g = await gconnect(target), c = g.client;
+  if (!g.plans.img){
+    const api = await c.view_api();
     const eps = Object.entries(api.named_endpoints || {}).filter(([n, ep]) => (ep.returns || []).some(r => /image/i.test(r.component || '')));
-    const hit = eps.find(([n]) => /infer/i.test(n)) || eps[0];
-    if (!hit) throw new Error('Space FLUX เปลี่ยนรูปแบบ API แล้ว');
-    fluxPlan = {name: hit[0], ps: hit[1].parameters || []};
+    const hit = eps.find(([n]) => /infer|txt2img/i.test(n)) || eps[0];
+    if (!hit) throw new Error('ปลายทางนี้ไม่มีช่องสร้างภาพ');
+    g.plans.img = {name: hit[0], ps: hit[1].parameters || []};
   }
+  const plan = g.plans.img;
   const st = IMG_STYLES.find(x => x[0] === S.imgStyle)?.[2], [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
   const full = prompt + (st ? ', ' + st : '');
-  const args = fluxPlan.ps.map(p => {
+  const args = plan.ps.map(p => {
     const n = plabel(p);
     if (/prompt/.test(n) && !/neg/.test(n)) return full;
     if (/randomize/.test(n)) return false;
     if (/seed/.test(n)) return seed % 2147483647;
     if (/width/.test(n)) return w;
     if (/height/.test(n)) return h;
-    if (/steps/.test(n)) return 4;
+    if (/steps/.test(n)) return isUrl(target) ? 2 : 4;
     if (p.parameter_has_default) return p.parameter_default;
     return p.example_input ?? null;
   });
   let res;
-  try { res = await fluxClient.predict(fluxPlan.name, args); }
-  catch(e){
-    const m = String(e?.message || e?.title || JSON.stringify(e));
-    if (/quota|ZeroGPU|GPU/i.test(m)) throw new Error('โควตา GPU ฟรีของ Hugging Face หมดชั่วคราว');
-    throw new Error('FLUX ล้มเหลว: ' + m.slice(0, 120));
-  }
+  try { res = await c.predict(plan.name, args); } catch(e){ throw gradioErr(e, target, 'สร้างภาพ'); }
+  if (!isUrl(target)) Q.clear('hf');
   const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url || x.path));
   const url = typeof out === 'string' ? out : out?.url;
-  if (!url) throw new Error('FLUX ไม่ได้ส่งภาพกลับมา');
+  if (!url) throw new Error('ปลายทางไม่ได้ส่งภาพกลับมา');
   const r = await fetch(url); if (!r.ok) throw new Error('ดาวน์โหลดภาพไม่ได้ (' + r.status + ')');
   return r.blob();
+}
+/* Pollinations image: fetch so we can read quota errors; fall back to <img> if CORS blocks */
+async function polImage(prompt, seed, msg){
+  const tryUrl = async (url, k) => {
+    let r; const ac = new AbortController(), t = setTimeout(() => ac.abort(), 120000);
+    try { r = await fetch(url, {signal: ac.signal}); } catch(e){ clearTimeout(t); if (e.name === 'AbortError') throw new Error('หมดเวลา'); const im = await loadImg(url); return {im, url}; }
+    clearTimeout(t);
+    if (!r.ok){
+      const d = await r.text().catch(() => '');
+      if (k === 'pollinations' && (r.status === 402 || /pollen|balance|credit|insufficient/i.test(d))) Q.mark('pollinations', d.slice(0, 200), 0);
+      else if (r.status === 429) Q.mark(k, 'rate limit', +r.headers.get('retry-after') || 60);
+      const e = new Error(r.status === 429 ? quotaText(k) : 'สร้างภาพไม่สำเร็จ (' + r.status + ')'); e.status = r.status; throw e;
+    }
+    Q.clear(k);
+    const blob = await r.blob(), u = URL.createObjectURL(blob);
+    return {im: await loadImg(u), url: u, blob};
+  };
+  if (S.polKey && !Q.hit('pollinations')){
+    try { return await tryUrl(imgUrl(prompt, seed), 'pollinations'); }
+    catch(e){ msg('คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'); }
+  }
+  return tryUrl(imgUrl(prompt, seed, true), 'polfree');
 }
 function showShot(div, im, url, prompt, note){
   im.alt = prompt;
@@ -950,25 +1194,28 @@ function showShot(div, im, url, prompt, note){
 async function renderShot(div, prompt, seed){
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาด…</div>`;
   const msg = t => { const l = div.querySelector('.ld'); if (l) l.lastChild.textContent = t; };
+  const eng = S.imgEngine, t0 = performance.now();
   try {
-    if (S.imgEngine === 'flux'){
+    if (eng === 'flux' || eng === 'server'){
+      const target = eng === 'server' ? S.serverUrl : FLUX_SPACE;
       try {
-        msg('กำลังวาดด้วย FLUX (รอคิว GPU ฟรี)…');
-        const blob = await fluxImage(prompt, seed);
-        const url = URL.createObjectURL(blob); const im = await loadImg(url);
-        showShot(div, im, url, prompt);
+        if (eng === 'flux' && Q.hit('hf')) throw new Error(quotaText('hf'));
+        msg(eng === 'server' ? 'กำลังวาดบนคอมของฉัน…' : 'กำลังวาดด้วย FLUX (รอคิว GPU ฟรี)…');
+        const blob = await gradioImage(target, prompt, seed);
+        SPEED.learn('img-' + eng, performance.now() - t0);
+        const url = URL.createObjectURL(blob);
+        showShot(div, await loadImg(url), url, prompt);
         addHistory({kind:'image', prompt, blob});
         return;
       } catch(e){
-        toast(e.message + ' — สลับไปใช้ Pollinations (อาจมีลายน้ำ)', true);
-        msg('FLUX ไม่ว่าง กำลังใช้ตัวสำรอง…');
+        toast(e.message + ' — ใช้ Pollinations แทน (อาจมีลายน้ำ)', true);
+        msg('ใช้ตัวสำรอง Pollinations…');
       }
     }
-    let url = imgUrl(prompt, seed), im;
-    try { im = await loadImg(url); }
-    catch(e){ if (!S.polKey) throw e; url = imgUrl(prompt, seed, true); msg('คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'); im = await loadImg(url); }
-    showShot(div, im, url, prompt, S.imgEngine === 'flux' ? 'ตัวสำรอง' : '');
-    addHistory({kind:'image', prompt, url});
+    const r = await polImage(prompt, seed, msg);
+    if (eng === 'pol') SPEED.learn('img-pol', performance.now() - t0);
+    showShot(div, r.im, r.url, prompt, eng !== 'pol' ? 'ตัวสำรอง' : '');
+    addHistory(r.blob ? {kind:'image', prompt, blob: r.blob} : {kind:'image', prompt, url: r.url});
   } catch(e){
     div.innerHTML = `<div class="ld">${esc(e.message)}<br><button class="btn sm alt" style="margin-top:8px">ลองใหม่</button></div>`;
     div.querySelector('button').onclick = () => renderShot(div, prompt, seed);
@@ -981,18 +1228,26 @@ $('#btnImg').onclick = async () => {
   const grid = $('#imgGrid'); grid.innerHTML = ''; grid.classList.toggle('one', S.imgCount === 1);
   const shots = Array.from({length: S.imgCount}, () => { const d = document.createElement('div'); d.className = 'shot'; d.innerHTML = '<div class="ld">รอคิว…</div>'; grid.appendChild(d); return d; });
   const seeds = shots.map(() => Math.floor(Math.random() * 1e9));
-  if (S.imgEngine === 'pol' && S.polKey) await Promise.all(shots.map((d, i) => renderShot(d, prompt, seeds[i])));
+  if (S.imgEngine === 'pol' && S.polKey && !Q.hit('pollinations')) await Promise.all(shots.map((d, i) => renderShot(d, prompt, seeds[i])));
   else for (let i = 0; i < shots.length; i++){
-    if (i && S.imgEngine === 'pol'){ for (let s = 15; s > 0; s--){ $('#imgStatus').textContent = `โหมดฟรีไม่มีคีย์: รอ ${s} วินาทีก่อนภาพถัดไป`; await sleep(1000); } }
+    if (i && S.imgEngine === 'pol' && (!S.polKey || Q.hit('pollinations'))){ for (let s = 15; s > 0; s--){ $('#imgStatus').textContent = `โหมดฟรีไม่มีคีย์: รอ ${s} วินาทีก่อนภาพถัดไป`; await sleep(1000); } }
     $('#imgStatus').textContent = `กำลังวาดภาพที่ ${i+1}/${shots.length}`;
     await renderShot(shots[i], prompt, seeds[i]);
   }
-  $('#imgStatus').textContent = S.imgEngine === 'flux' ? 'FLUX: ไม่มีลายน้ำ · ใช้โควตา GPU ฟรีของ Hugging Face (ใส่ HF token ในตั้งค่าเพื่อได้โควตาเพิ่ม)' : '';
+  $('#imgStatus').textContent = ''; renderEst(); renderQuota();
   btn.classList.remove('busy'); btn.disabled = false; imgBusy = false;
 };
 
 /* ---------------- boot ---------------- */
-onText(); renderVoice(); ui();
+try {
+  const qs = new URLSearchParams(location.search), sv = qs.get('server');
+  if (sv && isUrl(sv)){
+    S.serverUrl = sv.replace(/\/+$/, ''); if (S.cloneEngine !== 'server') S.cloneEngine = 'server'; S.imgEngine = 'server'; save();
+    history.replaceState(null, '', location.pathname + location.hash);
+    setTimeout(() => { toast('เชื่อมกับคอมของฉันแล้ว — โคลนเสียงและสร้างภาพจะใช้คอมเครื่องนั้น'); serverInfo().then(renderEst).catch(e => toast(e.message, true)); }, 600);
+  }
+} catch(e){}
+onText(); renderVoice(); ui(); renderEngines(); renderQuota();
 const h0 = location.hash.slice(1); if (PAGES[h0]) go(h0);
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ closeAll(); $('#editor').classList.remove('full'); } });

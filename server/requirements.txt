@@ -1,0 +1,11 @@
+gradio>=5.0
+torch
+torchaudio
+diffusers>=0.30
+transformers
+accelerate
+safetensors
+soundfile
+f5-tts-th
+qrcode
+psutil

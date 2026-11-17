@@ -202,3 +202,8 @@ audio{width:100%;margin-top:12px;height:40px}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .toast.err{border-color:rgba(248,113,113,.6)}
 .status{font-size:13px;color:var(--mut);text-align:center;margin:-4px 0 10px;min-height:20px}
+
+.qbar{margin:-4px 0 14px;padding:12px 14px;border-radius:16px;background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.45);color:#fde68a;font-size:14px;line-height:1.6}
+.qbar b{font-weight:600}
+code{font-size:12.5px;background:rgba(129,140,248,.15);padding:1px 5px;border-radius:6px;word-break:break-all}
+@media (min-width:900px){.app{max-width:640px}}
