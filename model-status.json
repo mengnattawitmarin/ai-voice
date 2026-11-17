@@ -1,0 +1,909 @@
+{
+ "lists": {
+  "author=Tanotfin&search=tts": [],
+  "author=Tanotfin&search=thai": [],
+  "search=mms-tts-tha": [
+   "facebook/mms-tts-tha",
+   "chuubjak/mms-tts-thai",
+   "pother/mms-tts-finetune-tha",
+   "pother/mms-tts-finetune-tha-2",
+   "pother/mms-tts-finetune-tha-1",
+   "pother/mms-tts-finetune-tha-full",
+   "pother/mms-tts-finetune-tha-full-1",
+   "pother/mms-tts-finetune-tha-w",
+   "pother/mms-tts-finetune-tha-BT",
+   "pother/mms-tts-finetune-tha-LB",
+   "VIZINTZOR/MMS-TTS-THAI-MALEV1",
+   "VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR",
+   "VIZINTZOR/MMS-TTS-THAI-FEMALEV1",
+   "VIZINTZOR/MMS-TTS-THAI-MALEV2",
+   "VIZINTZOR/MMS-TTS-THAI-FEMALEV2",
+   "tharushaudana/mms-tts-eng-train",
+   "tharushaudana/mms-tts-eng-train-sin",
+   "tharushaudana/mms-tts-sinhala-custom-vocab",
+   "tharushaudana/mms-tts-sinhala-custom-vocab-v2",
+   "siridech/mms-tts-tha-onnx",
+   "payam1394/traxlate-mms-tts-tha"
+  ],
+  "search=thai%20onnx&filter=text-to-speech": [
+   "Rotem12/kokoro-thai-q8-onnx"
+  ],
+  "filter=transformers.js&search=thai": [
+   "Xenova/thainer-corpus-v2-base-model"
+  ]
+ },
+ "models": {
+  "Rotem12/kokoro-thai-q8-onnx": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "fb9070ec1f4dae354d2b83b1fe23e151ddd2cd5b",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "onnx",
+    "text-to-speech",
+    "tts",
+    "kokoro",
+    "quantization",
+    "int8",
+    "thai",
+    "th",
+    "license:apache-2.0",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "kokoro_thai_q8.onnx",
+    "thai_som.npy"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "license": "apache-2.0",
+    "tags": [
+     "text-to-speech",
+     "tts",
+     "kokoro",
+     "onnx",
+     "quantization",
+     "int8",
+     "thai"
+    ],
+    "pipeline_tag": "text-to-speech"
+   },
+   "readme": "---\r\nlanguage:\r\n- th\r\nlicense: apache-2.0\r\ntags:\r\n- text-to-speech\r\n- tts\r\n- kokoro\r\n- onnx\r\n- quantization\r\n- int8\r\n- thai\r\npipeline_tag: text-to-speech\r\n---\r\n\r\n# Kokoro-Thai INT8 (Refined Q8 ONNX)\r\n\r\nThis repository provides an optimized, high-fidelity **INT8 quantized ONNX checkpoint** for the Thai Kokoro TTS model ([FastThaiG2P](https://github.com/awslabs/FastThaiG2P) lineage).\r\n\r\nOptimized and packaged for [**Text To Speech on Steam**](https://store.steampowered.com/app/3562490/Text_To_Speech/).\r\n\r\n---\r\n\r\n## Key Highlights\r\n\r\n- **33% Smaller Disk Footprint**: Reduced from **310.5 MB** (FP32) down to **208.4 MB** (INT8).\r\n- **22.5% Lower RAM Usage**: Saves **105.3 MB of system RAM** during load and reduces peak working-set memory by **118.1 MB**.\r\n- **100% Timing Parity (0.0 ms Duration Drift)**: Evaluated across **534 rigorous test cases** spanning all 44 Thai consonants, digits (0–9, ๐–๙), minimal tone pairs, decimals, currency formats, multi-lingual English loanwords, and massive 475-token paragraphs. The duration predictor matched FP32 timing with **exact 0-frame drift (0.0 ms)** across all 534 cases.\r\n- **Tonal Pitch Integrity**: Mean fundamental frequency ($F_0$) Pearson correlation $r = 0.9907$ with pitch RMSE $< 4.2\\text{ Hz}$ (well below human ear pitch discrimination thresholds of $3\\text{--}5\\text{ Hz}$).\r\n- **Whisper ASR Verified**: 100% transcription parity with baseline FP32 when verified on local Whisper large-v3-turbo.\r\n- **Native CPU Acceleration**: Optim"
+  },
+  "Tanotfin/mms-thai-female-podcast-spk0-stable2-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-thai-jori-f5-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-thai-riko-f5-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-tts-2081-FM-stable-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-tts-2081-FM-stable2-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-tts-2081-M-stable-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-tts-2081-M-stable2-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "Tanotfin/mms-tts-2081-stable-onnx": {
+   "api": 401,
+   "config": 401,
+   "model_onnx": 401,
+   "readme": ""
+  },
+  "VIZINTZOR/MMS-TTS-THAI-FEMALEV1": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "d0989b729b63e73362cf8aaa20c39652124160a4",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "safetensors",
+    "vits",
+    "text-to-speech",
+    "Thai",
+    "th",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "tags": [
+     "text-to-speech",
+     "Thai"
+    ]
+   },
+   "readme": "---\nlanguage:\n- th\ntags:\n- text-to-speech\n- Thai\n---\nโมเดลนี้ใช้ เสียงที่บันทึกจาก Play.ht : https://play.ht/ เพื่อนำมา finetune model.\n\nFinetune โมเดลโค้ด GitHub : https://github.com/VYNCX/finetune-local-vits\n\n[Finetune-colab](https://colab.research.google.com/drive/12qbpHnu7wYiTEoqh6_57_KUjp4gJkx2h?usp=sharing\n) เทรนโมเดลเสียงด้วยตัวเองบน Google Colab\n\nใช้งาน บน local คอมพิวเตอร์ https://github.com/VYNCX/VachanaTTS\n\nการใช้งาน : \n```py\nimport torch\nfrom transformers import VitsTokenizer, VitsModel, set_seed\nimport scipy\n\ntokenizer = VitsTokenizer.from_pretrained(\"VIZINTZOR/VIZINTZOR/MMS-TTS-THAI-FEMALEV1\",cache_dir=\"./mms\")\nmodel = VitsModel.from_pretrained(\"VIZINTZOR/VIZINTZOR/MMS-TTS-THAI-FEMALEV1\",cache_dir=\"./mms\")\n\ninputs = tokenizer(text=\"สวัสดีค่ะ นี่คือเสียงพูดภาษาไทย\", return_tensors=\"pt\")\n\nset_seed(456)  # make deterministic\n\nwith torch.no_grad():\n   outputs = model(**inputs)\n\nwaveform = outputs.waveform[0]\n\n# Convert PyTorch tensor to NumPy array\nwaveform_array = waveform.numpy()\n\nscipy.io.wavfile.write(\"techno_output.wav\", rate=model.config.sampling_rate, data=waveform_array)\n```\n"
+  },
+  "VIZINTZOR/MMS-TTS-THAI-FEMALEV2": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "236e33ca3d3afb923dd62baa7031e760a7ba7007",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "safetensors",
+    "vits",
+    "text-to-speech",
+    "Thai",
+    "th",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "tags": [
+     "text-to-speech",
+     "Thai"
+    ]
+   },
+   "readme": "---\nlanguage:\n- th\ntags:\n- text-to-speech\n- Thai\n---\n\nFinetune โมเดลโค้ด GitHub : https://github.com/VYNCX/finetune-local-vits\n\n[Finetune-colab](https://colab.research.google.com/drive/12qbpHnu7wYiTEoqh6_57_KUjp4gJkx2h?usp=sharing\n) เทรนโมเดลเสียงด้วยตัวเองบน Google Colab\n\nใช้งาน บน local คอมพิวเตอร์ https://github.com/VYNCX/VachanaTTS\n\nการใช้งาน : \n```py\nimport torch\nfrom transformers import VitsTokenizer, VitsModel, set_seed\nimport scipy\n\ntokenizer = VitsTokenizer.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-FEMALEV2\",cache_dir=\"./mms\")\nmodel = VitsModel.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-FEMALEV2\",cache_dir=\"./mms\")\n\ninputs = tokenizer(text=\"สวัสดีค่ะ นี่คือเสียงพูดภาษาไทย\", return_tensors=\"pt\")\n\nset_seed(456)  # make deterministic\n\nwith torch.no_grad():\n   outputs = model(**inputs)\n\nwaveform = outputs.waveform[0]\n\n# Convert PyTorch tensor to NumPy array\nwaveform_array = waveform.numpy()\n\nscipy.io.wavfile.write(\"techno_output.wav\", rate=model.config.sampling_rate, data=waveform_array)\n```\n"
+  },
+  "VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "66cc49b998d7a1eb3af8fa1d4a84b5a08b2745af",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "safetensors",
+    "vits",
+    "text-to-speech",
+    "Thai",
+    "th",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "tags": [
+     "text-to-speech",
+     "Thai"
+    ]
+   },
+   "readme": "---\nlanguage:\n- th\ntags:\n- text-to-speech\n- Thai\n---\nโมเดลนี้ใช้ เสียงที่บันทึกจาก Play.ht : https://play.ht/ เพื่อนำมา finetune model.\n\nFinetune โมเดลโค้ด GitHub : https://github.com/VYNCX/finetune-local-vits\n\n[Finetune-colab](https://colab.research.google.com/drive/12qbpHnu7wYiTEoqh6_57_KUjp4gJkx2h?usp=sharing\n) เทรนโมเดลเสียงด้วยตัวเองบน Google Colab\n\nใช้งาน บน local คอมพิวเตอร์ https://github.com/VYNCX/VachanaTTS\n\nการใช้งาน : \n```py\nimport torch\nfrom transformers import VitsTokenizer, VitsModel, set_seed\nimport scipy\n\ntokenizer = VitsTokenizer.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR\",cache_dir=\"./mms\")\nmodel = VitsModel.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR\",cache_dir=\"./mms\")\n\ninputs = tokenizer(text=\"สวัสดีครับ นี่คือการบรรยายภาษาไทย\", return_tensors=\"pt\")\n\nset_seed(456)  # make deterministic\n\nwith torch.no_grad():\n   outputs = model(**inputs)\n\nwaveform = outputs.waveform[0]\n\n# Convert PyTorch tensor to NumPy array\nwaveform_array = waveform.numpy()\n\nscipy.io.wavfile.write(\"techno_output.wav\", rate=model.config.sampling_rate, data=waveform_array)\n```\n"
+  },
+  "VIZINTZOR/MMS-TTS-THAI-MALEV1": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "16011c5cb79eb28424ed4482e4ee91ca2751ad90",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "safetensors",
+    "vits",
+    "text-to-speech",
+    "Thai",
+    "th",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "tags": [
+     "text-to-speech",
+     "Thai"
+    ]
+   },
+   "readme": "---\nlanguage:\n- th\ntags:\n- text-to-speech\n- Thai\n---\nโมเดลนี้ใช้ เสียงที่บันทึกจาก Play.ht : https://play.ht/ เพื่อนำมา finetune model.\n\nFinetune โมเดลโค้ด GitHub : https://github.com/VYNCX/finetune-local-vits\n\n[Finetune-colab](https://colab.research.google.com/drive/12qbpHnu7wYiTEoqh6_57_KUjp4gJkx2h?usp=sharing\n) เทรนโมเดลเสียงด้วยตัวเองบน Google Colab\n\nใช้งาน บน local คอมพิวเตอร์ https://github.com/VYNCX/VachanaTTS\n\nการใช้งาน : \n```py\nimport torch\nfrom transformers import VitsTokenizer, VitsModel, set_seed\nimport scipy\n\ntokenizer = VitsTokenizer.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALEV1\",cache_dir=\"./mms\")\nmodel = VitsModel.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALEV1\",cache_dir=\"./mms\")\n\ninputs = tokenizer(text=\"สวัสดีครับ นี่คือเสียงพูดภาษาไทย\", return_tensors=\"pt\")\n\nset_seed(456)  # make deterministic\n\nwith torch.no_grad():\n   outputs = model(**inputs)\n\nwaveform = outputs.waveform[0]\n\n# Convert PyTorch tensor to NumPy array\nwaveform_array = waveform.numpy()\n\nscipy.io.wavfile.write(\"techno_output.wav\", rate=model.config.sampling_rate, data=waveform_array)\n```\n"
+  },
+  "VIZINTZOR/MMS-TTS-THAI-MALEV2": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "7a8228990277f79627c71642fef96302d50010bb",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-speech",
+    "Thai",
+    "th",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "language": [
+     "th"
+    ],
+    "tags": [
+     "text-to-speech",
+     "Thai"
+    ],
+    "library_name": "transformers"
+   },
+   "readme": "---\nlanguage:\n- th\ntags:\n- text-to-speech\n- Thai\nlibrary_name: transformers\n---\nโมเดลนี้ใช้ เสียงที่บันทึกจาก Play.ht : https://play.ht/ เพื่อนำมา finetune model.\n\nFinetune โมเดลโค้ด GitHub : https://github.com/VYNCX/finetune-local-vits\n\n[Finetune-colab](https://colab.research.google.com/drive/12qbpHnu7wYiTEoqh6_57_KUjp4gJkx2h?usp=sharing\n) เทรนโมเดลเสียงด้วยตัวเองบน Google Colab\n\nใช้งาน บน local คอมพิวเตอร์ https://github.com/VYNCX/VachanaTTS\n\nการใช้งาน : \n```py\nimport torch\nfrom transformers import VitsTokenizer, VitsModel, set_seed\nimport scipy\n\ntokenizer = VitsTokenizer.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALEV2\",cache_dir=\"./mms\")\nmodel = VitsModel.from_pretrained(\"VIZINTZOR/MMS-TTS-THAI-MALEV2\",cache_dir=\"./mms\")\n\ninputs = tokenizer(text=\"สวัสดีครับ นี่คือเสียงพูดภาษาไทย\", return_tensors=\"pt\")\n\nset_seed(456)  # make deterministic\n\nwith torch.no_grad():\n   outputs = model(**inputs)\n\nwaveform = outputs.waveform[0]\n\n# Convert PyTorch tensor to NumPy array\nwaveform_array = waveform.numpy()\n\nscipy.io.wavfile.write(\"techno_output.wav\", rate=model.config.sampling_rate, data=waveform_array)\n```"
+  },
+  "Xenova/mms-tts-eng": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 200,
+   "sha": "3f8955a2adbd6487ce57420620d4916de22b9dac",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers.js",
+    "onnx",
+    "vits",
+    "text-to-audio",
+    "text-to-speech",
+    "base_model:facebook/mms-tts-eng",
+    "base_model:quantized:facebook/mms-tts-eng",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "onnx/model.onnx",
+    "onnx/model_fp16.onnx",
+    "onnx/model_quantized.onnx",
+    "quantize_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "base_model": "facebook/mms-tts-eng",
+    "library_name": "transformers.js",
+    "pipeline_tag": "text-to-speech",
+    "tags": [
+     "text-to-audio"
+    ]
+   },
+   "readme": "---\nbase_model: facebook/mms-tts-eng\nlibrary_name: transformers.js\npipeline_tag: text-to-speech\ntags:\n- text-to-audio\n---\n\nhttps://huggingface.co/facebook/mms-tts-eng with ONNX weights to be compatible with Transformers.js.\n\n## Usage (Transformers.js)\n\nIf you haven't already, you can install the [Transformers.js](https://huggingface.co/docs/transformers.js) JavaScript library from [NPM](https://www.npmjs.com/package/@xenova/transformers) using:\n```bash\nnpm i @xenova/transformers\n```\n\n**Example:** Generate English speech with `Xenova/mms-tts-eng`.\n```js\nimport { pipeline } from '@xenova/transformers';\n\n// Create a text-to-speech pipeline\nconst synthesizer = await pipeline('text-to-speech', 'Xenova/mms-tts-eng', {\n    quantized: false, // Remove this line to use the quantized version (default)\n});\n\n// Generate speech\nconst output = await synthesizer('Hello, my dog is cute');\nconsole.log(output);\n// {\n//   audio: Float32Array(37888) [ ... ],\n//   sampling_rate: 16000\n// }\n```\n\nOptionally, save the audio to a wav file (Node.js):\n```js\nimport wavefile from 'wavefile';\nimport fs from 'fs';\n\nconst wav = new wavefile.WaveFile();\nwav.fromScratch(1, output.sampling_rate, '32f', output.audio);\nfs.writeFileSync('out.wav', wav.toBuffer());\n```\n\n<audio controls src=\"https://cdn-uploads.huggingface.co/production/uploads/61b253b7ac5ecaae3d1efe0c/cg9b1aFMUji7_Tzm5aWh9.wav\"></audio>\n\n---\n\nNote: Having a separate repo for ONNX weights is intended to be a temporary solution until WebML gains mor"
+  },
+  "Xenova/thainer-corpus-v2-base-model": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 200,
+   "sha": "2e9a6fe0da38f8812de0844f61f4e99284ec6352",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers.js",
+    "onnx",
+    "camembert",
+    "token-classification",
+    "base_model:pythainlp/thainer-corpus-v2-base-model",
+    "base_model:quantized:pythainlp/thainer-corpus-v2-base-model",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "onnx/model.onnx",
+    "onnx/model_bnb4.onnx",
+    "onnx/model_fp16.onnx",
+    "onnx/model_int8.onnx",
+    "onnx/model_q4.onnx",
+    "onnx/model_q4f16.onnx",
+    "onnx/model_quantized.onnx",
+    "onnx/model_uint8.onnx",
+    "quantize_config.json",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json"
+   ],
+   "card": {
+    "base_model": "pythainlp/thainer-corpus-v2-base-model",
+    "library_name": "transformers.js"
+   },
+   "readme": "---\nbase_model: pythainlp/thainer-corpus-v2-base-model\nlibrary_name: transformers.js\n---\n\nhttps://huggingface.co/pythainlp/thainer-corpus-v2-base-model with ONNX weights to be compatible with Transformers.js.\n\n## Usage (Transformers.js)\n\nIf you haven't already, you can install the [Transformers.js](https://huggingface.co/docs/transformers.js) JavaScript library from [NPM](https://www.npmjs.com/package/@huggingface/transformers) using:\n```bash\nnpm i @huggingface/transformers\n```\n\n**Example:** Perform named entity recognition.\n\n```js\nimport { pipeline } from '@huggingface/transformers';\n\nconst classifier = await pipeline('token-classification', 'Xenova/thainer-corpus-v2-base-model');\nconst output = await classifier('My name is Sarah and I live in London');\n```\n\nNote: Having a separate repo for ONNX weights is intended to be a temporary solution until WebML gains more traction. If you would like to make your models web-ready, we recommend converting to ONNX using [🤗 Optimum](https://huggingface.co/docs/optimum/index) and structuring your repo like this one (with ONNX weights located in a subfolder named `onnx`)."
+  },
+  "chuubjak/mms-tts-thai": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "2f8b56da1d3d50e374c5e24928fd3ac9df15ffeb",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "facebook/mms-tts-tha": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "fcecc37a91566f4a36ba6c6c8aa39830ff6daa9d",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "pytorch",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "mms",
+    "text-to-speech",
+    "arxiv:2305.13516",
+    "license:cc-by-nc-4.0",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "model.safetensors",
+    "pytorch_model.bin",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "license": "cc-by-nc-4.0",
+    "tags": [
+     "mms",
+     "vits"
+    ],
+    "pipeline_tag": "text-to-speech"
+   },
+   "readme": "\n---\nlicense: cc-by-nc-4.0\ntags:\n- mms\n- vits\npipeline_tag: text-to-speech\n---\n\n# Massively Multilingual Speech (MMS): Thai Text-to-Speech\n\nThis repository contains the **Thai (tha)** language text-to-speech (TTS) model checkpoint.\n\nThis model is part of Facebook's [Massively Multilingual Speech](https://arxiv.org/abs/2305.13516) project, aiming to\nprovide speech technology across a diverse range of languages. You can find more details about the supported languages\nand their ISO 639-3 codes in the [MMS Language Coverage Overview](https://dl.fbaipublicfiles.com/mms/misc/language_coverage_mms.html),\nand see all MMS-TTS checkpoints on the Hugging Face Hub: [facebook/mms-tts](https://huggingface.co/models?sort=trending&search=facebook%2Fmms-tts).\n\nMMS-TTS is available in the 🤗 Transformers library from version 4.33 onwards.\n\n## Model Details\n\nVITS (**V**ariational **I**nference with adversarial learning for end-to-end **T**ext-to-**S**peech) is an end-to-end \nspeech synthesis model that predicts a speech waveform conditional on an input text sequence. It is a conditional variational \nautoencoder (VAE) comprised of a posterior encoder, decoder, and conditional prior.\n\nA set of spectrogram-based acoustic features are predicted by the flow-based module, which is formed of a Transformer-based\ntext encoder and multiple coupling layers. The spectrogram is decoded using a stack of transposed convolutional layers,\nmuch in the same style as the HiFi-GAN vocoder. Motivated by the one-to-ma"
+  },
+  "payam1394/traxlate-mms-tts-tha": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 200,
+   "sha": "22ea28ad564dfb8f58f06ad7e22bf2d93b0b714a",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers.js",
+    "onnx",
+    "vits",
+    "text-to-audio",
+    "text-to-speech",
+    "th",
+    "base_model:facebook/mms-tts-tha",
+    "base_model:quantized:facebook/mms-tts-tha",
+    "license:cc-by-nc-4.0",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "onnx/model.onnx",
+    "onnx/model_quantized.onnx",
+    "quantize_config.json",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers.js",
+    "license": "cc-by-nc-4.0",
+    "language": [
+     "th"
+    ],
+    "pipeline_tag": "text-to-speech",
+    "base_model": "facebook/mms-tts-tha"
+   },
+   "readme": "---\r\nlibrary_name: transformers.js\r\nlicense: cc-by-nc-4.0\r\nlanguage:\r\n- th\r\npipeline_tag: text-to-speech\r\nbase_model: facebook/mms-tts-tha\r\n---\r\n\r\n# traxlate-mms-tts-tha\r\n\r\n[facebook/mms-tts-tha](https://huggingface.co/facebook/mms-tts-tha) (Meta MMS\r\nThai VITS text-to-speech) converted to ONNX for\r\n[transformers.js](https://huggingface.co/docs/transformers.js), laid out\r\nlike the Xenova `mms-tts-*` conversions (fp32 + q8 dynamic quantization).\r\nConverted with the transformers.js 3.8.1 conversion script (torch 2.6.0\r\nlegacy exporter, onnxslim skipped, fp16 omitted -- see quantize_config.json).\r\n\r\n```js\r\nimport { pipeline } from '@huggingface/transformers';\r\nconst synth = await pipeline('text-to-speech', 'payam1394/traxlate-mms-tts-tha', { dtype: 'q8' });\r\n```\r\n\r\nLicense: CC-BY-NC-4.0 (inherited from the MMS release).\r\n"
+  },
+  "pother/mms-tts-finetune-tha": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "afa40e0d0d4ef6a191ca9f04286bff1a0dd7de96",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-1": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "f227fc9c9e542fed7bc695e53850549157c138c2",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-2": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "1c934a31627e5af367a29534949d2ce6b8b0ae97",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-BT": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "894dadb3b750fe7a6879e6904d1418263f4528ed",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-LB": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "c0c13a14bfad4bcb84f75fef86a29f5f0bda8e33",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-full": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "874b35569a18d7388d6e81850edeecbd3da4a925",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-full-1": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "06c26bff58f3a0a81afd4bbd20ecb2422cd6992f",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "added_tokens.json",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "pother/mms-tts-finetune-tha-w": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "4cafb7f487d95086f443b82ad616d946d33ec30d",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "model.safetensors"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "siridech/mms-tts-tha-onnx": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "ec46d9a6ecd54e12a597511437bc77e022bc4961",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "onnx",
+    "vits",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "added_tokens.json",
+    "config.json",
+    "model.onnx",
+    "special_tokens_map.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {},
+   "readme": ""
+  },
+  "tharushaudana/mms-tts-eng-train": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "31af4ef451edf8c02c5d355ffcbf0c9914251265",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "pytorch",
+    "vits",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "added_tokens.json",
+    "config.json",
+    "preprocessor_config.json",
+    "pytorch_model.bin",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {},
+   "readme": ""
+  },
+  "tharushaudana/mms-tts-eng-train-sin": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "4b2a6cb1c58382c366e6d0bc563414e30e87bb4c",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "pytorch",
+    "vits",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "added_tokens.json",
+    "config.json",
+    "preprocessor_config.json",
+    "pytorch_model.bin",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {},
+   "readme": ""
+  },
+  "tharushaudana/mms-tts-sinhala-custom-vocab": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "3fd64b5f434fce9b87c9ab99254b639735308783",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  },
+  "tharushaudana/mms-tts-sinhala-custom-vocab-v2": {
+   "api": 200,
+   "config": 200,
+   "model_onnx": 404,
+   "sha": "f57fb4a09c230714c716ac8c80599310a1fe4eb3",
+   "gated": false,
+   "private": false,
+   "tags": [
+    "transformers",
+    "safetensors",
+    "vits",
+    "text-to-audio",
+    "arxiv:1910.09700",
+    "endpoints_compatible",
+    "region:us"
+   ],
+   "files": [
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "tokenizer_config.json",
+    "vocab.json"
+   ],
+   "card": {
+    "library_name": "transformers",
+    "tags": []
+   },
+   "readme": "---\nlibrary_name: transformers\ntags: []\n---\n\n# Model Card for Model ID\n\n<!-- Provide a quick summary of what the model is/does. -->\n\n\n\n## Model Details\n\n### Model Description\n\n<!-- Provide a longer summary of what this model is. -->\n\nThis is the model card of a 🤗 transformers model that has been pushed on the Hub. This model card has been automatically generated.\n\n- **Developed by:** [More Information Needed]\n- **Funded by [optional]:** [More Information Needed]\n- **Shared by [optional]:** [More Information Needed]\n- **Model type:** [More Information Needed]\n- **Language(s) (NLP):** [More Information Needed]\n- **License:** [More Information Needed]\n- **Finetuned from model [optional]:** [More Information Needed]\n\n### Model Sources [optional]\n\n<!-- Provide the basic links for the model. -->\n\n- **Repository:** [More Information Needed]\n- **Paper [optional]:** [More Information Needed]\n- **Demo [optional]:** [More Information Needed]\n\n## Uses\n\n<!-- Address questions around how the model is intended to be used, including the foreseeable users of the model and those affected by the model. -->\n\n### Direct Use\n\n<!-- This section is for the model use without fine-tuning or plugging into a larger ecosystem/app. -->\n\n[More Information Needed]\n\n### Downstream Use [optional]\n\n<!-- This section is for the model use when fine-tuned for a task, or when plugged into a larger ecosystem/app -->\n\n[More Information Needed]\n\n### Out-of-Scope Use\n\n<!-- This section addresses misuse, malicious use,"
+  }
+ }
+}
