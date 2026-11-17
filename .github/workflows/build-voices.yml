@@ -19,7 +19,10 @@ jobs:
           pip install --quiet torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
           pip install --quiet transformers==4.44.2 onnx==1.16.2 onnxruntime==1.19.2 tokenizers huggingface_hub soundfile librosa numpy==1.26.4
       - name: Convert
-        run: python tools/build_voices.py
+        run: |
+          python tools/build_voices.py
+          python3 -c "import json;r=json.load(open('out/report.json'));[print('::notice title='+k+'::'+json.dumps({x:v.get(x) for x in ['ok','f0','gender','sec','size','tok_match','dynamic_ok','error']},ensure_ascii=False).replace(chr(10),' ')) for k,v in r.items()]"
+          du -sh out; find out -size +95M -exec ls -la {} \;
       - name: Publish to models branch
         run: |
           cd out
@@ -28,4 +31,4 @@ jobs:
           git config user.email github-actions@users.noreply.github.com
           git add -A
           git commit -q -m "Thai voice models (ONNX) for AI Voice"
-          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" models
+          git -c http.postBuffer=524288000 push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" models > ../push.log 2>&1 || { echo "::error title=push::$(tail -c 1500 ../push.log | tr '\n' ' ')"; exit 1; }

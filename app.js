@@ -636,9 +636,41 @@ function renderEst(){
 /* ---------------- free on-device AI voice (transformers.js, WebGPU or CPU) ---------------- */
 const TTS_WORKER = `
 import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+// Voice models are mirrored in this app's own GitHub repo (branch "models") so they cannot disappear.
+const HOST = 'https://raw.githubusercontent.com/mengnattawitmarin/ai-voice/models/';
+const CN = 'aivoice-models-v1';
 env.allowLocalModels = false;
+env.remoteHost = HOST;
+env.remotePathTemplate = '{model}/';
+env.useBrowserCache = false;
+env.useCustomCache = true;
+async function fetchParts(url){
+  const m = await fetch(url + '.manifest.json');
+  if (!m.ok) return null;
+  const man = await m.json(); const bufs = []; let got = 0;
+  for (const p of man.parts){
+    const res = await fetch(url.replace(/model\.onnx$/, p));
+    if (!res.ok) throw new Error('ดาวน์โหลดโมเดลไม่ได้ (' + res.status + ')');
+    const rd = res.body.getReader();
+    for (;;){ const { done, value } = await rd.read(); if (done) break; bufs.push(value); got += value.length; self.postMessage({ progress: got / man.size * 100 }); }
+  }
+  return new Response(new Blob(bufs), { headers: { 'content-type': 'application/octet-stream', 'content-length': String(man.size) } });
+}
+env.customCache = {
+  async match(key){
+    const url = typeof key === 'string' ? key : key.url;
+    const c = await caches.open(CN);
+    const hit = await c.match(url); if (hit) return hit;
+    if (url.startsWith(HOST) && url.endsWith('/onnx/model.onnx')){
+      const r = await fetchParts(url);
+      if (r){ await c.put(url, r.clone()); return r; }
+    }
+    return undefined;
+  },
+  async put(key, resp){ try { const c = await caches.open(CN); await c.put(typeof key === 'string' ? key : key.url, resp); } catch (e) {} },
+};
 const pipes = {};
-let gpuOk = null;
+let gpuOk = null, chain = Promise.resolve();
 async function hasGpu(){ if (gpuOk !== null) return gpuOk; try { gpuOk = !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch (e) { gpuOk = false; } return gpuOk; }
 function load(model, device){
   const k = model + '|' + device;
@@ -648,8 +680,7 @@ function load(model, device){
   return pipes[k];
 }
 async function run(model, device, text){ const tts = await load(model, device); const t0 = performance.now(); const out = await tts(text); return { out, ms: performance.now() - t0 }; }
-self.onmessage = async e => {
-  const { id, model, text, want } = e.data;
+async function job({ id, model, text, want }){
   let device = want === 'wasm' ? 'wasm' : (await hasGpu()) ? 'webgpu' : 'wasm';
   try {
     let r;
@@ -657,7 +688,9 @@ self.onmessage = async e => {
     catch (err) { if (device !== 'webgpu' || want === 'webgpu') throw err; device = 'wasm'; r = await run(model, device, text); }
     self.postMessage({ id, device, ms: r.ms, audio: r.out.audio, rate: r.out.sampling_rate }, [r.out.audio.buffer]);
   } catch (err) { self.postMessage({ id, device, error: String((err && err.message) || err) }); }
-};`;
+}
+self.onmessage = e => { chain = chain.then(() => job(e.data)); };
+`;
 let ttsWorker = null, ttsSeq = 0; const ttsJobs = {};
 function getWorker(){
   if (ttsWorker) return ttsWorker;
