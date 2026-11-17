@@ -1,0 +1,43 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build release APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Rename
+        run: cp android/app/build/outputs/apk/release/app-release.apk ai-voice.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-voice-apk
+          path: ai-voice.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-v${{ github.run_number }}
+          name: AI Voice Android v1.0.${{ github.run_number }}
+          make_latest: true
+          files: ai-voice.apk
+          body: |
+            ดาวน์โหลด ai-voice.apk แล้วติดตั้งบน Android (อนุญาต "ติดตั้งแอปที่ไม่รู้จัก" ให้ Chrome/Files)
+            แอปเปิดผ่าน Chrome ในเครื่อง — ต้องมี Google Chrome ติดตั้งอยู่
+            ลิงก์เว็บ (Mac / เครื่องทั่วไป): https://mengnattawitmarin.github.io/ai-voice/

@@ -1,3 +1,6 @@
 server/config.json
 server/.venv/
 __pycache__/
+android/.gradle/
+android/app/build/
+android/build/

@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "io.github.mengnattawitmarin.aivoice",
+    "sha256_cert_fingerprints": ["E8:2E:2B:20:91:CF:F5:7F:F2:15:23:D9:BD:32:08:E0:0A:F4:4A:27:DD:2B:89:0E:0A:06:66:58:71:FD:5A:D8"]
+  }
+}]
