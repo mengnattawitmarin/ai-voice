@@ -36,7 +36,7 @@ const db = (() => {
 const S = Object.assign({
   polKey:'', hfToken:'', space:'pythonlearnreal/F5-TTS-THAI',
   lang:'th', tone:1, style:'natural', rate:1, vol:1, voice:null,
-  cloneEngine:'hf', localDev:'auto', serverUrl:'', imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
+  cloneEngine:'hf', localDev:'auto', serverUrl:'', macSave:true, imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
 
@@ -442,6 +442,7 @@ function stopAll(){
 function finish(){
   clearInterval(P.keep); P.state = 'idle'; ui();
   $('#prog').style.width = '100%'; status('<b style="color:var(--ok)">อ่านจบแล้ว ✓</b>' + (P.kind === 'remote' ? ' — กด “บันทึกเสียง” เพื่อดาวน์โหลดไฟล์' : ''));
+  if (P.kind === 'remote' && S.serverUrl && S.macSave) buildFile(true).then(f => f && saveToMac(f, 'audio', ta.value.trim().slice(0, 40))).catch(() => {});
 }
 function jump(i){
   P.idx = i; if (P.state === 'idle') P.state = 'playing';
@@ -592,10 +593,10 @@ function defMs(k){
     case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
     case 'ai': return 12;
     case 'clone-hf': return 60;
-    case 'clone-server': return SERVER_INFO?.tts_ms_per_char || (sd === 'cuda' ? 15 : sd === 'mps' ? 110 : 500);
+    case 'clone-server': return SERVER_INFO?.tts_ms_per_char || (sd === 'cuda' ? 15 : sd === 'cpu' ? 500 : 110);
     case 'img-flux': return 12000;
     case 'img-pol': return 9000;
-    case 'img-server': return SERVER_INFO?.img_ms || (sd === 'cuda' ? 1500 : sd === 'mps' ? 6000 : 45000);
+    case 'img-server': return SERVER_INFO?.img_ms || (sd === 'cuda' ? 1500 : sd === 'cpu' ? 45000 : 6000);
   }
   return 50;
 }
@@ -822,10 +823,11 @@ async function mergeAudio(blobs){
 }
 
 /* build full audio file (for download / share) */
-async function buildFile(){
+async function buildFile(quiet){
   const text = ta.value.trim(); if (!text) { toast('ใส่ข้อความก่อนนะ'); return null; }
   const v = curVoice();
   if (v.type === 'device'){
+    if (quiet) return null;
     openSheet(sheetHead('บันทึกเสียงเป็นไฟล์') + `<p class="lim">เสียงในเครื่องเล่นได้อย่างเดียว เบราว์เซอร์<b>ไม่อนุญาตให้อัดเป็นไฟล์</b><br>เปลี่ยนเป็น <b>เสียง AI</b> หรือ <b>เสียงโคลน</b> เพื่อดาวน์โหลดเป็น MP3/WAV ได้</p><button class="btn" style="width:100%" id="swAi">ใช้เสียง AI (Nova)</button>`,
       el => el.querySelector('#swAi').onclick = () => { S.voice = {type:'ai', id:'nova'}; save(); renderVoice(); closeAll(); if (!S.polKey) openSettings(true); });
     return null;
@@ -845,19 +847,47 @@ async function buildFile(){
   addHistory({kind:'audio', text: text.slice(0, 4000), voice: v.name, blob: P.lastFile});
   return P.lastFile;
 }
-$('#dkSave').onclick = async () => { const f = await buildFile(); if (f) { saveBlob(f, f.name); toast('ดาวน์โหลดแล้ว: ' + f.name); } };
+$('#dkSave').onclick = async () => { const f = await buildFile(); if (f) { saveBlob(f, f.name); toast('ดาวน์โหลดแล้ว: ' + f.name); saveToMac(f, 'audio', ta.value.trim().slice(0, 40)); } };
 $('#dkShare').onclick = async () => {
   const text = ta.value.trim();
   try {
     if (curVoice().type !== 'device'){
       const f = await buildFile(); if (!f) return;
-      if (navigator.canShare?.({files:[f]})) return await navigator.share({files:[f], title:'เสียงจาก AI Voice'});
-      saveBlob(f, f.name); return toast('อุปกรณ์นี้แชร์ไฟล์ตรงไม่ได้ จึงดาวน์โหลดให้แทน');
+      saveToMac(f, 'audio', text.slice(0, 40));
+      return await shareFiles([f], 'เสียงจาก AI Voice');
     }
     if (navigator.share) return await navigator.share({title:'AI Voice', text: text ? text.slice(0, 2000) : 'แอปแปลงข้อความเป็นเสียง', url: location.href.split('#')[0]});
     await navigator.clipboard.writeText(location.href.split('#')[0]); toast('คัดลอกลิงก์แอปแล้ว');
   } catch(e){ if (e.name !== 'AbortError') toast('แชร์ไม่สำเร็จ', true); }
 };
+
+/* ---------------- save to Mac + share (Android share sheet → Google Drive) ---------------- */
+const extOf = t => /png/.test(t) ? 'png' : /webp/.test(t) ? 'webp' : /wav/.test(t) ? 'wav' : /mpeg|mp3/.test(t) ? 'mp3' : /jpe?g/.test(t) ? 'jpg' : 'bin';
+const macSaved = new WeakSet();
+async function saveToMac(blob, kind, name){
+  if (!S.serverUrl || !S.macSave || !blob || macSaved.has(blob)) return;
+  macSaved.add(blob);
+  try {
+    const g = await gconnect(S.serverUrl);
+    const file = blob instanceof File ? blob : new File([blob], `ai-voice.${extOf(blob.type)}`, {type: blob.type});
+    const r = await g.client.predict('/save_file', [gradio.handle_file(file), kind, (name || '').slice(0, 60)]);
+    const path = String(r.data?.[0] || '');
+    toast('💾 บันทึกลง Mac แล้ว: ' + path.split('/').slice(-3).join('/'));
+  } catch(e){ macSaved.delete(blob); toast('บันทึกลง Mac ไม่สำเร็จ: ' + (e.message || e), true); }
+}
+let driveTipShown = LS.get('driveTip', false);
+async function shareFiles(files, title){
+  files = files.filter(Boolean);
+  if (!files.length) return;
+  if (navigator.canShare?.({files})){
+    if (!driveTipShown && /Android/i.test(navigator.userAgent)){ driveTipShown = true; LS.set('driveTip', true); toast('เลือก “ไดรฟ์” (Google Drive) ในหน้าแชร์ เพื่อบันทึกขึ้น Drive', false); await sleep(900); }
+    try { await navigator.share({files, title}); } catch(e){ if (e.name !== 'AbortError') toast('แชร์ไม่สำเร็จ: ' + e.message, true); }
+    return;
+  }
+  files.forEach(f => saveBlob(f, f.name));
+  toast('อุปกรณ์/เบราว์เซอร์นี้แชร์ไฟล์ตรงไม่ได้ จึงดาวน์โหลดให้แทน — อัปโหลดขึ้น Drive จากแอป Files ได้');
+}
+const asFile = (blob, base) => blob instanceof File ? blob : new File([blob], `${base}-${stamp()}.${extOf(blob.type)}`, {type: blob.type || 'application/octet-stream'});
 
 /* ---------------- history ---------------- */
 async function addHistory(item){
@@ -877,7 +907,7 @@ async function openHistory(){
   h += items.length ? items.map(it => `<div class="item" data-id="${it.id}">
       ${it.kind === 'image' ? `<img src="${esc(it.url || (it.blob ? URL.createObjectURL(it.blob) : ''))}" alt="" loading="lazy">` : `<span class="ib"><svg class="i"><use href="#${ic[it.kind]}"/></svg></span>`}
       <div class="t"><b>${esc((it.text || it.prompt || '').slice(0, 80))}</b><small>${when(it.created)} · ${it.kind === 'image' ? 'ภาพ' : esc(it.voice || '')}${it.kind === 'audio' ? ' · มีไฟล์เสียง' : ''}</small></div>
-      ${it.kind === 'audio' ? `<button class="ib" data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>` : ''}
+      ${it.blob ? `<button class="ib" data-sh aria-label="แชร์ / Google Drive"><svg class="i"><use href="#i-share"/></svg></button><button class="ib" data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>` : ''}
       <button class="ib" data-open aria-label="เปิด"><svg class="i"><use href="#i-refresh"/></svg></button>
       <button class="ib" data-del aria-label="ลบ"><svg class="i"><use href="#i-trash"/></svg></button></div>`).join('') + `<button class="btn danger sm" style="margin-top:14px" id="hClear">ล้างประวัติทั้งหมด</button>`
     : '<p class="hint">ยังไม่มีประวัติ</p>';
@@ -888,7 +918,8 @@ async function openHistory(){
         if (it.kind === 'image'){ $('#imgPrompt').value = it.prompt; go('image'); }
         else { go('tts'); putText(it.text, ''); }
       };
-      row.querySelector('[data-dl]')?.addEventListener('click', () => saveBlob(it.blob, it.blob.name || 'ai-voice.mp3'));
+      row.querySelector('[data-dl]')?.addEventListener('click', () => { const f = asFile(it.blob, it.kind === 'image' ? 'ai-image' : 'ai-voice'); saveBlob(f, f.name); });
+      row.querySelector('[data-sh]')?.addEventListener('click', () => shareFiles([asFile(it.blob, it.kind === 'image' ? 'ai-image' : 'ai-voice')], (it.text || it.prompt || '').slice(0, 80)));
       row.querySelector('[data-del]').onclick = async () => { await db.del('history', it.id); row.remove(); };
     });
     el.querySelector('#hClear')?.addEventListener('click', async () => { await db.clear('history'); openHistory(); });
@@ -966,6 +997,9 @@ async function openProc(){
       <li><code>cd ai-voice/server && ./start-mac.sh</code> (ครั้งแรกติดตั้ง+โหลดโมเดลหลาย GB)</li>
       <li>สแกน QR ที่ขึ้นในหน้าต่าง Terminal ด้วยมือถือ หรือคัดลอกลิงก์ <code>https://…gradio.live</code> มาวางด้านบน</li>
     </ol>
+    <label class="switch" style="margin-top:4px"><span>บันทึกภาพและเสียงลง Mac อัตโนมัติ<br><small style="color:var(--mut)" id="macDir">${SERVER_INFO?.save_dir ? 'โฟลเดอร์: ' + esc(SERVER_INFO.save_dir) : 'เชื่อมต่อเพื่อดูโฟลเดอร์'}</small></span><input type="checkbox" id="macSave" ${S.macSave ? 'checked' : ''}></label>
+    <button class="btn alt sm" id="macPick" style="margin-top:10px">เปลี่ยนโฟลเดอร์ (เลือกบนหน้าจอ Mac)</button>
+    <p class="hint">ไฟล์จะถูกจัดเป็น <code>โฟลเดอร์ที่เลือก/images/วันที่</code> และ <code>/audio/วันที่</code></p>
     <p class="hint">Mac รุ่น M1/M2/M3 ใช้ GPU ผ่าน Metal อัตโนมัติ · ลิงก์ gradio.live เปลี่ยนทุกครั้งที่เปิดเซิร์ฟเวอร์ใหม่ (สแกน QR ใหม่) · ต้องเปิดคอมค้างไว้ตอนใช้</p>
     <button class="btn alt sm" id="toKeys" style="margin-top:6px">ตั้งค่าคีย์ API…</button>`,
   el => {
@@ -982,10 +1016,19 @@ async function openProc(){
       if (u && !isUrl(u)) u = 'https://' + u;
       S.serverUrl = u; save(); if (!u){ m.textContent = ''; return; }
       m.textContent = 'กำลังเชื่อมต่อ…';
-      try { const i = await serverInfo(); m.innerHTML = `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ${esc(i.chip || '')} · ${esc(i.device === 'mps' ? 'GPU Apple (Metal)' : i.device === 'cuda' ? 'GPU NVIDIA' : 'CPU')} · RAM ${i.ram_gb || '?'} GB</span>`; renderEst(); }
+      try { const i = await serverInfo(); el.querySelector('#macDir').textContent = 'โฟลเดอร์: ' + (i.save_dir || '?'); m.innerHTML = `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ${esc(i.chip || '')} · ${esc(i.device === 'mps' ? 'GPU Apple (Metal)' : i.device === 'cuda' ? 'GPU NVIDIA' : 'CPU')} · RAM ${i.ram_gb || '?'} GB</span>`; renderEst(); }
       catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
     };
     el.querySelector('#toKeys').onclick = () => openSettings();
+    el.querySelector('#macSave').onchange = e => { S.macSave = e.target.checked; save(); };
+    el.querySelector('#macPick').onclick = async () => {
+      if (!S.serverUrl) return toast('เชื่อมต่อคอมของฉันก่อน', true);
+      const d = el.querySelector('#macDir'); d.textContent = 'ไปที่หน้าจอ Mac แล้วเลือกโฟลเดอร์ในหน้าต่างที่เด้งขึ้น…';
+      try { const g = await gconnect(S.serverUrl); const r = await g.client.predict('/choose_folder', []); const path = String(r.data?.[0] || '');
+        if (SERVER_INFO) { SERVER_INFO.save_dir = path; LS.set('serverInfo', SERVER_INFO); }
+        d.textContent = 'โฟลเดอร์: ' + path; toast('ตั้งโฟลเดอร์เก็บงานบน Mac แล้ว');
+      } catch(e){ d.textContent = 'เปลี่ยนโฟลเดอร์ไม่สำเร็จ: ' + (e.message || e); }
+    };
   });
 }
 let installEvt = null;
@@ -1119,14 +1162,17 @@ function loadImg(url, ms = 120000){
   return new Promise((res, rej) => { const im = new Image(); const t = setTimeout(() => { im.src = ''; rej(new Error('หมดเวลา')); }, ms);
     im.onload = () => { clearTimeout(t); res(im); }; im.onerror = () => { clearTimeout(t); rej(new Error('สร้างภาพไม่สำเร็จ')); }; im.src = url; });
 }
+async function shotFile(div, url){
+  if (div._file) return div._file;
+  const b = await (await fetch(url)).blob();
+  return div._file = asFile(b, 'ai-image');
+}
 function shotActions(div, url, prompt){
   div.querySelector('[data-dl]').onclick = async () => {
-    try { const b = await (await fetch(url)).blob(); saveBlob(b, `ai-image-${stamp()}.jpg`); } catch(e){ window.open(url, '_blank'); }
+    try { const f = await shotFile(div, url); saveBlob(f, f.name); } catch(e){ window.open(url, '_blank'); }
   };
   div.querySelector('[data-sh]').onclick = async () => {
-    try { const b = await (await fetch(url)).blob(); const f = new File([b], `ai-image-${stamp()}.jpg`, {type: b.type || 'image/jpeg'});
-      if (navigator.canShare?.({files:[f]})) await navigator.share({files:[f], title: prompt.slice(0, 80)}); else saveBlob(f, f.name);
-    } catch(e){ if (e.name !== 'AbortError') toast('แชร์ไม่สำเร็จ', true); }
+    try { await shareFiles([await shotFile(div, url)], prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); }
   };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
@@ -1189,7 +1235,8 @@ async function polImage(prompt, seed, msg){
 function showShot(div, im, url, prompt, note){
   im.alt = prompt;
   div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button></div>` + (note ? `<div class="ld" style="position:absolute;left:8px;top:8px;padding:3px 8px;background:rgba(6,10,32,.75);border-radius:8px;font-size:11px">${note}</div>` : '');
-  div.prepend(im); shotActions(div, url, prompt);
+  div.prepend(im); div._file = null; shotActions(div, url, prompt);
+  if (S.serverUrl && S.macSave) shotFile(div, url).then(f => saveToMac(f, 'images', prompt.slice(0, 40))).catch(() => {});
 }
 async function renderShot(div, prompt, seed){
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาด…</div>`;
@@ -1236,6 +1283,13 @@ $('#btnImg').onclick = async () => {
   }
   $('#imgStatus').textContent = ''; renderEst(); renderQuota();
   btn.classList.remove('busy'); btn.disabled = false; imgBusy = false;
+  const ok = shots.filter(d => d.querySelector('img'));
+  if (ok.length > 1){
+    const b = document.createElement('button'); b.className = 'btn alt'; b.style.cssText = 'width:100%;margin-top:12px;grid-column:1/-1';
+    b.innerHTML = '<svg class="i"><use href="#i-share"/></svg>แชร์ทั้งหมด / บันทึกลง Google Drive';
+    b.onclick = async () => { try { await shareFiles(await Promise.all(ok.map(d => shotFile(d, d.querySelector('img').src))), prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); } };
+    grid.appendChild(b);
+  }
 };
 
 /* ---------------- boot ---------------- */

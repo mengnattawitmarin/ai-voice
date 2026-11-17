@@ -14,6 +14,10 @@ import json
 import os
 import platform
 import random
+import re
+import shutil
+from datetime import datetime
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
@@ -57,6 +61,82 @@ def ram_gb():
 
 
 STATS = {"tts_ms_per_char": None, "img_ms": None}
+
+# ---------------- save folder (chosen on the Mac) ----------------
+CONFIG = Path(__file__).with_name("config.json")
+
+
+def load_cfg():
+    try:
+        return json.loads(CONFIG.read_text())
+    except Exception:
+        return {}
+
+
+def save_cfg(cfg):
+    CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+
+
+def pick_folder_dialog():
+    """Open the native macOS folder picker on this computer (someone at the Mac must click)."""
+    if sys.platform != "darwin":
+        return None
+    script = 'POSIX path of (choose folder with prompt "เลือกโฟลเดอร์สำหรับเก็บภาพและเสียงจาก AI Voice")'
+    try:
+        subprocess.run(["osascript", "-e", 'tell application "System Events" to activate'], timeout=5)
+        out = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=300)
+        path = out.stdout.strip()
+        return path.rstrip("/") or None
+    except Exception:
+        return None
+
+
+cfg = load_cfg()
+SAVE_DIR = os.environ.get("SAVE_DIR") or cfg.get("save_dir")
+if "--choose-folder" in sys.argv or (not SAVE_DIR and sys.platform == "darwin" and __name__ == "__main__"):
+    print("กำลังเปิดหน้าต่างเลือกโฟลเดอร์บน Mac …")
+    SAVE_DIR = pick_folder_dialog() or SAVE_DIR
+if not SAVE_DIR:
+    SAVE_DIR = str(Path.home() / "Pictures" / "AI-Voice")
+Path(SAVE_DIR).mkdir(parents=True, exist_ok=True)
+cfg["save_dir"] = SAVE_DIR
+save_cfg(cfg)
+
+ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".m4a", ".ogg"}
+
+
+def safe_name(name, ext):
+    name = re.sub(r"[\\/:*?\"<>|\n\r\t]+", " ", name or "").strip()[:60] or "ai-voice"
+    return f"{datetime.now().strftime('%H%M%S')} {name}{ext}"
+
+
+def save_file(file, kind="images", name=""):
+    """Copy a finished image/audio into the chosen folder: <folder>/<images|audio>/<YYYY-MM-DD>/"""
+    if not file:
+        raise gr.Error("no file")
+    ext = Path(file).suffix.lower()
+    if ext not in ALLOWED_EXT:
+        raise gr.Error("file type not allowed")
+    if os.path.getsize(file) > 300 * 2**20:
+        raise gr.Error("file too large")
+    sub = "audio" if kind == "audio" else "images"
+    day = Path(SAVE_DIR) / sub / datetime.now().strftime("%Y-%m-%d")
+    day.mkdir(parents=True, exist_ok=True)
+    dest = day / safe_name(name, ext)
+    shutil.copyfile(file, dest)
+    print(f"บันทึก: {dest}")
+    return str(dest)
+
+
+def choose_folder():
+    global SAVE_DIR
+    path = pick_folder_dialog()
+    if path:
+        SAVE_DIR = path
+        Path(SAVE_DIR).mkdir(parents=True, exist_ok=True)
+        cfg["save_dir"] = SAVE_DIR
+        save_cfg(cfg)
+    return SAVE_DIR
 
 # ---------------- voice cloning ----------------
 _tts = None
@@ -136,6 +216,7 @@ def info():
         "ram_gb": ram_gb(),
         "os": platform.platform(),
         "image_model": IMAGE_MODEL,
+        "save_dir": SAVE_DIR,
         "tts_loaded": _tts is not None,
         "img_loaded": _pipe is not None,
         **STATS,
@@ -159,6 +240,14 @@ with gr.Blocks(title="AI Voice Server") as demo:
         st = gr.Number(value=2, label="steps", precision=0)
         im = gr.Image(label="image", type="pil")
         gr.Button("Generate").click(txt2img, [p, s, wi, he, st], im, api_name="txt2img")
+    with gr.Tab("Save"):
+        f = gr.File(type="filepath", label="file")
+        k = gr.Textbox(value="images", label="kind")
+        n = gr.Textbox(label="name")
+        saved = gr.Textbox(label="saved_path")
+        gr.Button("Save").click(save_file, [f, k, n], saved, api_name="save_file")
+        folder = gr.Textbox(label="folder")
+        gr.Button("Choose folder on this Mac").click(choose_folder, None, folder, api_name="choose_folder")
     with gr.Tab("Info"):
         out = gr.Textbox(label="info")
         gr.Button("Refresh").click(info, None, out, api_name="info")
@@ -183,6 +272,7 @@ def print_link(url):
 
 if __name__ == "__main__":
     print(f"Device: {DEVICE} · {chip_name()} · RAM {ram_gb()} GB · image model {IMAGE_MODEL}")
+    print(f"โฟลเดอร์เก็บงาน: {SAVE_DIR}   (เปลี่ยน: ./start-mac.sh --choose-folder หรือกดจากแอป)")
     demo.queue(default_concurrency_limit=1)
     _, local_url, share_url = demo.launch(server_name="0.0.0.0", server_port=PORT, share=SHARE, prevent_thread_lock=True, show_error=True)
     print_link((share_url or local_url).rstrip("/"))
