@@ -7,7 +7,6 @@ import torch
 import onnxruntime as ort
 import soundfile as sf
 from huggingface_hub import hf_hub_download
-from tokenizers import Tokenizer
 from transformers import VitsModel, AutoTokenizer
 
 OUT = "out"
@@ -19,9 +18,9 @@ CONVERT = [
     ("th-female-v2", "VIZINTZOR/MMS-TTS-THAI-FEMALEV2"),
     ("th-female-v1", "VIZINTZOR/MMS-TTS-THAI-FEMALEV1"),
 ]
-MIRROR = [  # already transformers.js-ready
-    ("th-mms", "payam1394/traxlate-mms-tts-tha", SENT),
-    ("en-mms", "Xenova/mms-tts-eng", "Hello, this is a test of the English voice."),
+MIRROR = [  # already transformers.js-ready (name, repo, text, python tokenizer source)
+    ("th-mms", "payam1394/traxlate-mms-tts-tha", SENT, "facebook/mms-tts-tha"),
+    ("en-mms", "Xenova/mms-tts-eng", "Hello, this is a test of the English voice.", "facebook/mms-tts-eng"),
 ]
 TOK_SRC = "payam1394/traxlate-mms-tts-tha"
 PART = 90 * 1024 * 1024
@@ -57,15 +56,20 @@ def split(path):
     return size
 
 
-def run_onnx(path, tok_json, text):
+def run_onnx(path, ids):
     sess = ort.InferenceSession(path)
-    ids = Tokenizer.from_file(tok_json).encode(text).ids
     a = np.array([ids], dtype=np.int64)
     names = [i.name for i in sess.get_inputs()]
     feed = {"input_ids": a}
     if "attention_mask" in names:
         feed["attention_mask"] = np.ones_like(a)
-    return sess.run(None, feed)[0][0], ids
+    return sess.run(None, feed)[0][0]
+
+
+def vocab_of(tok_json):
+    m = json.load(open(tok_json)).get('model', {})
+    v = m.get('vocab')
+    return dict(v) if isinstance(v, dict) else ({t[0]: i for i, t in enumerate(v)} if isinstance(v, list) else None)
 
 
 class Wrap(torch.nn.Module):
@@ -80,19 +84,24 @@ class Wrap(torch.nn.Module):
 report = {}
 tok_files = {fn: hf_hub_download(TOK_SRC, fn) for fn in ["tokenizer.json", "tokenizer_config.json"]}
 
-for name, repo, text in MIRROR:
+for name, repo, text, pytok in MIRROR:
     r = {"repo": repo, "kind": "mirror"}
     try:
         d = f"{OUT}/{name}"
         os.makedirs(d + "/onnx", exist_ok=True)
         for fn in ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model.onnx"]:
             shutil.copy(hf_hub_download(repo, fn), f"{d}/{fn}")
-        wav, _ = run_onnx(f"{d}/onnx/model.onnx", f"{d}/tokenizer.json", text)
+        tk = AutoTokenizer.from_pretrained(pytok)
+        wav = run_onnx(f"{d}/onnx/model.onnx", tk(text)["input_ids"])
         sr = json.load(open(f"{d}/config.json")).get("sampling_rate", 16000)
         sf.write(f"{OUT}/samples/{name}.wav", wav, sr)
-        r.update(sec=round(len(wav) / sr, 2), f0=f0_median(wav, sr), size=split(f"{d}/onnx/model.onnx"), ok=True)
+        r.update(tok_match=vocab_of(f"{d}/tokenizer.json") == tk.get_vocab(), sec=round(len(wav) / sr, 2), f0=f0_median(wav, sr), ok=True)
     except Exception:
         r.update(ok=False, error=traceback.format_exc()[-800:])
+    finally:
+        mp = f"{OUT}/{name}/onnx/model.onnx"
+        if os.path.exists(mp):
+            r["size"] = split(mp)
     report[name] = r
     print(name, r, flush=True)
 
@@ -116,14 +125,18 @@ for name, repo in CONVERT:
         model.config.save_pretrained(d)
         for fn, p in tok_files.items():
             shutil.copy(p, f"{d}/{fn}")
-        wav, ids = run_onnx(f"{d}/onnx/model.onnx", f"{d}/tokenizer.json", SENT)
-        wav2, _ = run_onnx(f"{d}/onnx/model.onnx", f"{d}/tokenizer.json", "ทดสอบ")
+        wav = run_onnx(f"{d}/onnx/model.onnx", inp["input_ids"][0].tolist())
+        wav2 = run_onnx(f"{d}/onnx/model.onnx", tok("ทดสอบ")["input_ids"])
         sr = model.config.sampling_rate
         sf.write(f"{OUT}/samples/{name}.wav", wav, sr)
-        r.update(tok_match=ids == inp["input_ids"][0].tolist(), sec=round(len(wav) / sr, 2), torch_sec=round(len(ref) / sr, 2),
-                 dynamic_ok=len(wav2) < len(wav) * 0.6, f0=f0_median(wav, sr), size=split(f"{d}/onnx/model.onnx"), ok=True)
+        r.update(tok_match=vocab_of(f"{d}/tokenizer.json") == tok.get_vocab(), sec=round(len(wav) / sr, 2), torch_sec=round(len(ref) / sr, 2),
+                 dynamic_ok=len(wav2) < len(wav) * 0.6, f0=f0_median(wav, sr), ok=True)
     except Exception:
         r.update(ok=False, error=traceback.format_exc()[-800:])
+    finally:
+        mp = f"{OUT}/{name}/onnx/model.onnx"
+        if os.path.exists(mp):
+            r["size"] = split(mp)
     report[name] = r
     print(name, r, flush=True)
 
