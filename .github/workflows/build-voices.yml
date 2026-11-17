@@ -1,0 +1,31 @@
+name: Build Thai voice models
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tools/build_voices.py', '.github/workflows/build-voices.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install
+        run: |
+          pip install --quiet torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet transformers==4.44.2 onnx==1.16.2 onnxruntime==1.19.2 tokenizers huggingface_hub soundfile librosa numpy==1.26.4
+      - name: Convert
+        run: python tools/build_voices.py
+      - name: Publish to models branch
+        run: |
+          cd out
+          git init -q -b models
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add -A
+          git commit -q -m "Thai voice models (ONNX) for AI Voice"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" models
