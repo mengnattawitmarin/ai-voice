@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#060a1c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AI Voice">
+<meta name="description" content="แปลงข้อความเป็นเสียงพูด โคลนเสียง และสร้างภาพจากข้อความ">
+<title>Text to Speech — AI Voice</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&family=Prompt:wght@600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="gmic" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset=".5" stop-color="#818cf8"/><stop offset="1" stop-color="#c026d3"/></linearGradient>
+    <linearGradient id="gfeat" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#60a5fa"/><stop offset="1" stop-color="#c084fc"/></linearGradient>
+  </defs>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-crown" viewBox="0 0 24 24"><path d="M3 8l4 4 5-7 5 7 4-4-2 11H5L3 8z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4.2"/><path d="M3.5 21c.8-4.4 4.2-7 8.5-7s7.7 2.6 8.5 7z"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l4-1L19.5 7.5a2.1 2.1 0 0 0-3-3L5 16l-1 4z"/><path d="M14.5 6.5l3 3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="14" rx="3"/><path d="M8 21l3-3.5M8 9h8M8 12.5h5"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12.5-7.5z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="M12 13l4-4"/><circle cx="12" cy="13.5" r="1.3"/></symbol>
+  <symbol id="i-vol" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.7 3.8 5.7 3.8 9s-1.2 6.3-3.8 9c-2.6-2.7-3.8-5.7-3.8-9S9.4 5.7 12 3z"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M4.5 20h15"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5.5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="18.5" r="2.5"/><path d="M8.2 10.8l7.6-4M8.2 13.2l7.6 4"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 4v4.5H8M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="9.5" r="1.8"/><path d="M21 16l-5-5-9 9"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="M4 20L16 8M14 6l4 4"/><path d="M18 2.5v3M16.5 4h3M7 3v2M6 4h2M20 13v2M19 14h2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 8.5l5-5 5 5M4.5 20h15"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 14.6H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1A2 2 0 1 1 7 4.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3.6a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.1a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.3-4.6L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.6L20 16M20 20v-4h-4"/></symbol>
+</svg>
+
+<div class="app" id="app">
+  <header class="hdr">
+    <button class="menu" id="btnMenu" aria-label="เมนู"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="ttl"><h1 id="pageTitle">Text to Speech</h1><p id="pageSub">เปลี่ยนข้อความเป็นเสียงพูดคุณภาพสูง</p></div>
+    <button class="pro" id="btnPro"><svg class="i"><use href="#i-crown"/></svg><span>อัปเกรดโปร</span></button>
+    <button class="avatar" id="btnAvatar" aria-label="ตั้งค่า"><svg class="i"><use href="#i-user"/></svg></button>
+    <canvas id="wave"></canvas>
+  </header>
+
+  <!-- ============ TTS PAGE ============ -->
+  <section class="page on" data-page="tts">
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="text"><svg class="i"><use href="#i-pencil"/></svg>ข้อความ</button>
+      <button class="tab" data-tab="file"><svg class="i"><use href="#i-file"/></svg>ไฟล์</button>
+      <button class="tab" data-tab="link"><svg class="i"><use href="#i-link"/></svg>ลิงก์เว็บไซต์</button>
+    </div>
+
+    <div class="card">
+      <div class="card-h">
+        <h2><svg class="i"><use href="#i-msg"/></svg><span id="srcTitle">พิมพ์ข้อความของคุณ</span></h2>
+        <button class="ghost" id="btnClear"><svg class="i"><use href="#i-trash"/></svg>ล้างข้อความ</button>
+      </div>
+
+      <div id="paneText">
+        <div class="editor" id="editor">
+          <textarea id="text" placeholder="พิมพ์ข้อความที่ต้องการให้พูดที่นี่...&#10;รองรับภาษาไทยและหลายภาษา ยาวแค่ไหนก็ได้"></textarea>
+          <div class="reader" id="reader"></div>
+          <div class="editor-f">
+            <span class="tbadge">T</span><span class="count" id="count">0 ตัวอักษร</span>
+            <button class="sq" id="btnDictate" aria-label="พูดเพื่อพิมพ์"><svg class="i"><use href="#i-mic"/></svg></button>
+            <button class="sq" id="btnExpand" aria-label="ขยายเต็มจอ"><svg class="i"><use href="#i-expand"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div id="paneFile" hidden>
+        <label class="drop" id="drop">
+          <svg class="i"><use href="#i-upload"/></svg>
+          <b>แตะเพื่อเลือกไฟล์ หรือลากมาวาง</b>
+          <span>.txt .pdf .docx .md .srt — หรือรูปถ่ายหน้าหนังสือ (อ่านตัวหนังสือจากรูปให้)</span>
+          <input type="file" id="fileIn" accept=".txt,.md,.srt,.csv,.pdf,.docx,image/*,text/plain" hidden>
+        </label>
+        <p class="hint" id="fileHint"></p>
+      </div>
+
+      <div id="paneLink" hidden>
+        <div class="row2">
+          <input class="inp" id="urlIn" type="url" inputmode="url" placeholder="https://… วางลิงก์บทความ">
+          <button class="btn" id="btnFetch">ดึงข้อความ</button>
+        </div>
+        <p class="hint">ดึงเนื้อหาบทความผ่านบริการ r.jina.ai (ฟรี) แล้วนำมาใส่ในช่องข้อความให้อ่านต่อได้ทันที บางเว็บที่ต้องล็อกอินหรือกันบอทจะดึงไม่ได้</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">
+        <h2><svg class="i" style="color:#c084fc"><use href="#i-music"/></svg>เลือกเสียง</h2>
+        <button class="ghost" id="btnPreview"><svg class="i" style="fill:currentColor"><use href="#i-play"/></svg>ตัวอย่างเสียง</button>
+      </div>
+      <button class="voice" id="btnVoice">
+        <div class="vic" id="vic"><svg class="i"><use href="#i-mic"/></svg></div>
+        <div class="vtx"><b id="vName">เสียงผู้หญิง (คุณภาพสูง)</b><small id="vDesc">เป็นธรรมชาติ ฟังสบาย ชัดเจน</small></div>
+        <svg class="i chev"><use href="#i-chev"/></svg>
+      </button>
+      <div class="sliders">
+        <div class="sl">
+          <div class="sl-h"><svg class="i"><use href="#i-gauge"/></svg>ความเร็ว<span class="v" id="rateV">1.0x</span></div>
+          <input type="range" id="rate" min="0.5" max="1.5" step="0.05" value="1">
+          <div class="sl-l"><span>ช้า</span><span>ปกติ</span><span>เร็ว</span></div>
+        </div>
+        <div class="sl">
+          <div class="sl-h"><svg class="i"><use href="#i-vol"/></svg>ระดับเสียง<span class="v" id="volV">1.0</span></div>
+          <input type="range" id="vol" min="0" max="2" step="0.1" value="1">
+          <div class="sl-l"><span>เบา</span><span>ปกติ</span><span>ดัง</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card feats">
+      <button class="feat" id="fLang"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-globe"/></svg><div><b>ภาษา</b><small id="fLangV">ไทย</small></div></button>
+      <button class="feat" id="fTone"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-music"/></svg><div><b>โทนเสียง</b><small id="fToneV">ปกติ</small></div></button>
+      <button class="feat" id="fStyle"><svg class="i" style="stroke:#e879f9"><use href="#i-star"/></svg><div><b>รูปแบบเสียง</b><small id="fStyleV">ธรรมชาติ</small></div></button>
+      <button class="feat" id="fAdv"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-sliders"/></svg><div><b>ขั้นสูง</b><small>ปรับแต่งเพิ่มเติม</small></div></button>
+    </div>
+
+    <button class="cta" id="btnStart"><span class="bars"><i></i><i></i><i></i><i></i></span><span id="ctaTxt">เริ่มเล่นเสียง</span><span class="prog" id="prog"></span></button>
+    <div class="status" id="status"></div>
+  </section>
+
+  <!-- ============ CLONE PAGE ============ -->
+  <section class="page" data-page="clone">
+    <div class="card">
+      <div class="card-h"><h2><svg class="i"><use href="#i-mic"/></svg>1. อัดหรืออัปโหลดเสียงต้นแบบ</h2></div>
+      <div class="rec">
+        <button class="recbtn" id="btnRec" aria-label="อัดเสียง"><svg class="i"><use href="#i-mic"/></svg></button>
+        <div style="flex:1">
+          <b id="recState">แตะเพื่ออัดเสียง 6–12 วินาที</b>
+          <div class="hint" style="margin-top:2px">ห้องเงียบ พูดชัด ไม่มีเพลงพื้นหลัง</div>
+        </div>
+        <label class="btn sm alt"><svg class="i"><use href="#i-upload"/></svg>ไฟล์<input type="file" id="cloneFile" accept="audio/*" hidden></label>
+      </div>
+      <div class="say" id="sayBox"><small style="color:var(--mut)">ประโยคแนะนำให้อ่าน:</small><br><span id="sayText">ฉันเดินทางไปเที่ยวที่จังหวัดเชียงใหม่ในช่วงฤดูหนาวเพื่อสัมผัสอากาศเย็นสบาย</span></div>
+      <audio id="clonePreview" controls hidden></audio>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2><svg class="i"><use href="#i-pencil"/></svg>2. ข้อความที่พูดในคลิป</h2></div>
+      <textarea class="inp" id="cloneRef" style="height:90px;padding:12px;resize:vertical" placeholder="พิมพ์ให้ตรงกับที่พูดในคลิปต้นแบบ (ช่วยให้เสียงเหมือนขึ้นมาก)"></textarea>
+      <label class="lbl2">ตั้งชื่อเสียง</label>
+      <input class="inp" id="cloneName" placeholder="เช่น เสียงของฉัน">
+      <label class="check"><input type="checkbox" id="cloneConsent"><span>ฉันยืนยันว่านี่คือ<b>เสียงของฉันเอง</b> หรือเจ้าของเสียงอนุญาตให้ใช้แล้ว และจะไม่นำไปแอบอ้างหรือหลอกลวงผู้อื่น</span></label>
+      <div class="row2" style="margin-top:14px">
+        <button class="btn" id="btnCloneSave" style="flex:1"><svg class="i"><use href="#i-wand"/></svg>บันทึกและทดสอบเสียง</button>
+      </div>
+      <p class="hint" id="cloneHint">ประมวลผลบน Hugging Face Space ฟรี (โมเดล F5-TTS) — ครั้งแรกอาจต้องรอคิว 30 วินาที – หลายนาที</p>
+      <audio id="cloneOut" controls hidden></audio>
+    </div>
+    <div class="card">
+      <div class="card-h"><h2><svg class="i"><use href="#i-music"/></svg>เสียงที่โคลนไว้</h2></div>
+      <div id="cloneList"><p class="hint">ยังไม่มี</p></div>
+    </div>
+  </section>
+
+  <!-- ============ IMAGE PAGE ============ -->
+  <section class="page" data-page="image">
+    <div class="card">
+      <div class="card-h">
+        <h2><svg class="i"><use href="#i-wand"/></svg>อธิบายภาพที่ต้องการ</h2>
+        <button class="ghost" id="btnImgFromText"><svg class="i"><use href="#i-copy"/></svg>ใช้ข้อความ</button>
+      </div>
+      <div class="editor"><textarea id="imgPrompt" style="min-height:130px" placeholder="เช่น แมวส้มนั่งบนหลังคาวัด ยามพระอาทิตย์ตก แสงอบอุ่น"></textarea></div>
+      <label class="lbl2">สไตล์</label>
+      <div class="chips" id="imgStyle"></div>
+      <label class="lbl2">สัดส่วนภาพ</label>
+      <div class="chips" id="imgRatio"></div>
+      <label class="lbl2">จำนวนภาพ</label>
+      <div class="chips" id="imgCount"></div>
+      <label class="switch"><span>ให้ AI ขัดเกลาคำสั่ง<br><small style="color:var(--mut)">ช่วยมากเมื่อพิมพ์เป็นภาษาไทย</small></span><input type="checkbox" id="imgEnhance" checked></label>
+    </div>
+    <button class="cta" id="btnImg"><span class="bars"><i></i><i></i><i></i><i></i></span><span id="imgCtaTxt">สร้างภาพ</span></button>
+    <div class="status" id="imgStatus"></div>
+    <div class="grid" id="imgGrid"></div>
+  </section>
+
+  <div class="dock" id="dock">
+    <div class="dock-in">
+      <button class="dk" id="dkSave"><span class="c"><svg class="i"><use href="#i-down"/></svg></span><span class="lbl">บันทึกเสียง</span></button>
+      <button class="dk" id="dkShare"><span class="c"><svg class="i"><use href="#i-share"/></svg></span><span class="lbl">แชร์</span></button>
+      <button class="dk big" id="dkPlay" aria-label="เล่น"><span class="c"><svg class="i" id="dkPlayIc"><use href="#i-play"/></svg></span><span class="lbl"></span></button>
+      <button class="dk" id="dkStop"><span class="c"><svg class="i" style="fill:currentColor"><use href="#i-stop"/></svg></span><span class="lbl">หยุด</span></button>
+      <button class="dk" id="dkHist"><span class="c"><svg class="i"><use href="#i-hist"/></svg></span><span class="lbl">ประวัติการใช้งาน</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<nav class="drawer" id="drawer">
+  <h3>AI Voice Studio</h3>
+  <button class="nav on" data-go="tts"><svg class="i"><use href="#i-vol"/></svg><div>แปลงข้อความเป็นเสียง<small>อ่านยาวต่อเนื่อง ดาวน์โหลดได้</small></div></button>
+  <button class="nav" data-go="clone"><svg class="i"><use href="#i-mic"/></svg><div>โคลนเสียง<small>สร้างเสียงจากคลิปตัวอย่าง</small></div></button>
+  <button class="nav" data-go="image"><svg class="i"><use href="#i-image"/></svg><div>ข้อความเป็นรูปภาพ<small>สร้างภาพด้วย AI ฟรี</small></div></button>
+  <button class="nav" data-act="history"><svg class="i"><use href="#i-hist"/></svg><div>ประวัติการใช้งาน</div></button>
+  <button class="nav" data-act="settings"><svg class="i"><use href="#i-gear"/></svg><div>ตั้งค่า & คีย์ API</div></button>
+  <button class="nav" data-act="install"><svg class="i"><use href="#i-down"/></svg><div>ติดตั้งลงหน้าจอโทรศัพท์</div></button>
+  <button class="nav" data-act="about"><svg class="i"><use href="#i-info"/></svg><div>ทำอะไรได้ / ข้อจำกัด</div></button>
+</nav>
+<div class="sheet" id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
+<div class="toast" id="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
