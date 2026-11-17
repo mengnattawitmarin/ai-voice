@@ -72,6 +72,12 @@ const AI_VOICES = [
   ['onyx','เสียงผู้ชาย ทุ้ม','หนักแน่น เหมาะอ่านข่าว'],
   ['fable','เสียงนักเล่าเรื่อง','มีสีสัน สำเนียงอังกฤษ'],
 ];
+const LOCAL_VOICES = [
+  ['Tanotfin/mms-thai-female-podcast-spk0-stable2-onnx','เสียงผู้หญิงไทย (พอดแคสต์)','th'],
+  ['Tanotfin/mms-tts-2081-M-stable-onnx','เสียงไทย MMS (แบบ M)','th'],
+  ['Tanotfin/mms-tts-2081-FM-stable-onnx','เสียงไทย MMS (แบบ FM)','th'],
+  ['Xenova/mms-tts-eng','English voice (MMS)','en'],
+];
 const SPACES = [
   ['pythonlearnreal/F5-TTS-THAI','F5-TTS ภาษาไทย','เหมาะกับภาษาไทย'],
   ['mrfakename/E2-F5-TTS','F5-TTS (อังกฤษ/จีน)','Space ต้นฉบับ'],
@@ -263,10 +269,12 @@ function devForLang(){ return devVoices.filter(v => v.lang.toLowerCase().replace
 function curVoice(){
   const v = S.voice;
   if (v?.type === 'ai'){ const a = AI_VOICES.find(x => x[0] === v.id) || AI_VOICES[0]; return {type:'ai', id:a[0], name:a[1], desc:a[2] + ' · เสียง AI ดาวน์โหลดได้'}; }
+  if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้'}; }
   if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงโคลน · ' + (c.tested ? 'ทดสอบแล้ว' : 'ยังไม่ได้ทดสอบ'), rec:c}; }
   const list = devForLang();
   let d = (v?.type === 'device' && devVoices.find(x => x.voiceURI === v.id)) || null;
   if (!d || !d.lang.toLowerCase().startsWith(S.lang)) d = list.find(x => /premium|enhanced|natural|neural/i.test(x.name)) || list[0] || null;
+  if (!d && !v){ const l = LOCAL_VOICES.find(x => x[2] === S.lang); if (l) return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้'}; }
   if (!d) return {type:'device', id:null, name:'เสียงในเครื่อง', desc:devVoices.length ? `ไม่มีเสียง${lang()[1]}ในเครื่อง — ลองเสียง AI` : 'กำลังโหลดเสียง…'};
   return {type:'device', id:d.voiceURI, obj:d, name:prettyDev(d), desc:'เสียงในเครื่อง · ฟรี ใช้ออฟไลน์ได้'};
 }
@@ -283,7 +291,12 @@ $('#btnVoice').onclick = () => {
   const list = devForLang();
   const row = (k, n, d, on) => `<button class="opt ${on?'on':''}" data-k="${esc(k)}"><span class="dot"></span><span class="t"><b>${n}</b><small>${d}</small></span></button>`;
   let h = sheetHead('เลือกเสียง');
-  h += `<h4>เสียง AI คุณภาพสูง ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ใส่คีย์ฟรีก่อน</span>'}</h4>`;
+  const locs = LOCAL_VOICES.filter(l => l[2] === S.lang);
+  if (locs.length){
+    h += `<h4>เสียง AI ฟรี ไม่ต้องใช้คีย์ <span class="tag ok">แนะนำ</span></h4>`;
+    h += locs.map(l => row('local:'+l[0], esc(l[1]), 'ประมวลผลในมือถือ · โหลดโมเดลครั้งแรก ~110MB · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
+  }
+  h += `<h4>เสียง AI คุณภาพสูง ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
   h += AI_VOICES.map(a => row('ai:'+a[0], esc(a[1]) + ` <span class="tag">${a[0]}</span>`, esc(a[2]) + ' · ดาวน์โหลด MP3 ได้', v.type==='ai' && v.id===a[0])).join('');
   if (!keyOk) h += `<p class="hint">เสียง AI ใช้ Pollinations — <a href="#" data-set>ใส่คีย์ฟรีในตั้งค่า</a> (สมัครฟรี) อ่านภาษาไทยได้แต่สำเนียงอาจยังไม่เป๊ะ</p>`;
   h += `<h4>เสียงที่โคลนไว้</h4>`;
@@ -388,7 +401,7 @@ function ui(){
 function prepare(v, text){
   const key = v.type + ':' + v.id + '|' + text;
   if (P.key !== key){
-    const max = v.type === 'device' ? 180 : v.type === 'ai' ? 380 : 200;
+    const max = v.type === 'device' ? 180 : v.type === 'ai' ? 380 : v.type === 'local' ? 140 : 200;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
   }
   P.voice = v;
@@ -487,10 +500,45 @@ async function playRemote(){
 
 /* ---------------- engines ---------------- */
 async function synthesize(v, text){
+  if (v.type === 'local') return localTTS(text, v.id);
   if (v.type === 'ai') return pollinationsTTS(text, v.id);
   if (v.type === 'clone') return cloneTTS(text, v.rec);
   throw new Error('เสียงในเครื่องสร้างไฟล์เสียงไม่ได้');
 }
+/* free on-device AI voice: MMS/VITS models via transformers.js in a Web Worker */
+const TTS_WORKER = `
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
+env.allowLocalModels = false;
+const pipes = {};
+self.onmessage = async e => {
+  const { id, model, text } = e.data;
+  try {
+    pipes[model] ||= pipeline('text-to-speech', model, { dtype: 'fp32', device: 'wasm',
+      progress_callback: p => { if (p.status === 'progress' && /onnx/.test(p.file || '')) self.postMessage({ id, progress: p.progress }); } });
+    const tts = await pipes[model];
+    const out = await tts(text);
+    self.postMessage({ id, audio: out.audio, rate: out.sampling_rate }, [out.audio.buffer]);
+  } catch (err) { pipes[model] = null; self.postMessage({ id, error: String((err && err.message) || err) }); }
+};`;
+let ttsWorker = null, ttsSeq = 0; const ttsJobs = {};
+function getWorker(){
+  if (ttsWorker) return ttsWorker;
+  ttsWorker = new Worker(URL.createObjectURL(new Blob([TTS_WORKER], {type:'text/javascript'})), {type:'module'});
+  ttsWorker.onmessage = e => {
+    const d = e.data, job = ttsJobs[d.id]; if (!job) return;
+    if (d.progress != null){ status(`กำลังดาวน์โหลดโมเดลเสียง ${Math.round(d.progress)}% — ครั้งแรกครั้งเดียว ใช้ Wi-Fi จะเร็วกว่า`); return; }
+    delete ttsJobs[d.id];
+    d.error ? job.rej(new Error('เสียง AI ในเครื่องล้มเหลว: ' + d.error)) : job.res(encodeWav([d.audio], d.rate));
+  };
+  ttsWorker.onerror = e => { Object.values(ttsJobs).forEach(j => j.rej(new Error('โหลดตัวประมวลผลเสียงไม่ได้ — ตรวจอินเทอร์เน็ต หรือเบราว์เซอร์อาจเก่าเกินไป (' + (e.message || 'worker error') + ')'))); for (const k in ttsJobs) delete ttsJobs[k]; ttsWorker = null; };
+  return ttsWorker;
+}
+function localTTS(text, model){
+  const clean = text.replace(/[“”"«»()[\]{}<>*_#~|]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) return Promise.resolve(encodeWav([new Float32Array(1600)], 16000));
+  return new Promise((res, rej) => { const id = ++ttsSeq; ttsJobs[id] = {res, rej}; getWorker().postMessage({id, model, text: clean}); });
+}
+
 async function pollinationsTTS(text, voice){
   const k = S.polKey.trim();
   let r, detail = '';
@@ -503,8 +551,8 @@ async function pollinationsTTS(text, voice){
   } catch(e){ throw new Error('เชื่อมต่อบริการเสียง AI ไม่ได้ — ตรวจอินเทอร์เน็ต'); }
   if (!r.ok){
     detail = (await r.text().catch(() => '')) || detail;
-    if (r.status === 401 || r.status === 403 || (!k && /key|auth/i.test(detail))) throw new Error('ต้องใส่คีย์ Pollinations ก่อน (ฟรี) — เมนู › ตั้งค่า & คีย์ API');
-    if (r.status === 402) throw new Error('เครดิต Pollen หมด — รอเติมรายวันหรือใช้เสียงในเครื่อง');
+    if (r.status === 401 || r.status === 403 || (!k && /key|auth/i.test(detail))) throw new Error(/pollen|balance|credit/i.test(detail) ? 'Pollen ในบัญชี Pollinations หมด — เลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทนได้เลย' : 'ต้องใส่คีย์ Pollinations ก่อน — หรือเลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทน');
+    if (r.status === 402 || /pollen|balance|credit/i.test(detail)) throw new Error('Pollen ในบัญชี Pollinations หมด — เลือก “เสียง AI ฟรี ไม่ต้องใช้คีย์” แทนได้เลย');
     if (r.status === 429) throw new Error('เรียกถี่เกินไป รอสักครู่แล้วลองใหม่');
     throw new Error(`เสียง AI ล้มเหลว (${r.status}) ${detail.slice(0,120)}`);
   }
@@ -728,7 +776,9 @@ function openAbout(){
     <li class="y">✓ อ่านข้อความยาวไม่จำกัด แบ่งช่วงอัตโนมัติ แตะประโยคเพื่อข้ามไปได้</li>
     <li class="y">✓ นำเข้า .txt .pdf .docx .srt รูปถ่าย (OCR ไทย/อังกฤษ) และลิงก์เว็บ</li>
     <li class="y">✓ พูดเพื่อพิมพ์ (ไมค์) · ปรับความเร็ว ระดับเสียง โทน รูปแบบการอ่าน · 13 ภาษา</li>
-    <li class="y">✓ เสียง AI 6 แบบ ดาวน์โหลด MP3 / แชร์ไฟล์ (ต้องใช้คีย์ Pollinations ฟรี)</li>
+    <li class="y">✓ เสียง AI ไทยฟรี ไม่ต้องใช้คีย์ (ประมวลผลในมือถือ) ดาวน์โหลด WAV ได้</li>
+    <li class="y">✓ เสียง AI 6 แบบของ Pollinations ดาวน์โหลด MP3 (ต้องมีคีย์ + Pollen)</li>
+    <li class="m">△ เสียง AI ฟรีในเครื่อง: โหลดโมเดล ~110MB ครั้งแรก มือถือรุ่นเก่าอาจช้า ตัวเลข/คำอังกฤษในข้อความไทยอาจอ่านไม่ถูก</li>
     <li class="y">✓ โคลนเสียงจากคลิป 6–15 วินาที ผ่าน F5-TTS บน Hugging Face (ฟรี)</li>
     <li class="y">✓ สร้างภาพจากข้อความ 8 สไตล์ 4 สัดส่วน ดาวน์โหลด/แชร์ได้</li>
     <li class="y">✓ ประวัติการใช้งาน · ติดตั้งเป็นแอปบนมือถือ (PWA)</li>
@@ -826,11 +876,11 @@ $('#imgEnhance').checked = S.imgEnhance; $('#imgEnhance').onchange = e => { S.im
 $('#imgPrompt').value = LS.get('imgPrompt', '');
 $('#imgPrompt').oninput = e => LS.set('imgPrompt', e.target.value);
 $('#btnImgFromText').onclick = () => { const t = ta.value.trim(); if (!t) return toast('หน้าแปลงเสียงยังไม่มีข้อความ'); $('#imgPrompt').value = t.slice(0, 600); LS.set('imgPrompt', t.slice(0, 600)); toast('นำข้อความมาใช้แล้ว'); };
-function imgUrl(prompt, seed){
+function imgUrl(prompt, seed, free){
   const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2], [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
   const p = encodeURIComponent(prompt + (st ? ', ' + st : ''));
   const q = `width=${w}&height=${h}&seed=${seed}&model=flux&nologo=true` + (S.imgEnhance ? '&enhance=true' : '');
-  return S.polKey ? `https://gen.pollinations.ai/image/${p}?${q}&key=${encodeURIComponent(S.polKey)}` : `https://image.pollinations.ai/prompt/${p}?${q}`;
+  return (S.polKey && !free) ? `https://gen.pollinations.ai/image/${p}?${q}&key=${encodeURIComponent(S.polKey)}` : `https://image.pollinations.ai/prompt/${p}?${q}`;
 }
 let imgBusy = false;
 function loadImg(url, ms = 120000){
@@ -849,10 +899,13 @@ function shotActions(div, url, prompt){
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
 async function renderShot(div, prompt, seed){
-  const url = imgUrl(prompt, seed);
+  let url = imgUrl(prompt, seed);
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาด…</div>`;
   try {
-    const im = await loadImg(url); im.alt = prompt;
+    let im;
+    try { im = await loadImg(url); }
+    catch(e){ if (!S.polKey) throw e; url = imgUrl(prompt, seed, true); div.querySelector('.ld').lastChild.textContent = 'คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'; im = await loadImg(url); }
+    im.alt = prompt;
     div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button></div>`;
     div.prepend(im); shotActions(div, url, prompt);
     addHistory({kind:'image', prompt, url});
