@@ -36,7 +36,7 @@ const db = (() => {
 const S = Object.assign({
   polKey:'', hfToken:'', space:'pythonlearnreal/F5-TTS-THAI',
   lang:'th', tone:1, style:'natural', rate:1, vol:1, voice:null,
-  imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
+  imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
 
@@ -708,7 +708,7 @@ async function openHistory(){
   const ic = {tts:'i-vol', audio:'i-down', image:'i-image'};
   let h = sheetHead('ประวัติการใช้งาน');
   h += items.length ? items.map(it => `<div class="item" data-id="${it.id}">
-      ${it.kind === 'image' ? `<img src="${esc(it.url)}" alt="" loading="lazy">` : `<span class="ib"><svg class="i"><use href="#${ic[it.kind]}"/></svg></span>`}
+      ${it.kind === 'image' ? `<img src="${esc(it.url || (it.blob ? URL.createObjectURL(it.blob) : ''))}" alt="" loading="lazy">` : `<span class="ib"><svg class="i"><use href="#${ic[it.kind]}"/></svg></span>`}
       <div class="t"><b>${esc((it.text || it.prompt || '').slice(0, 80))}</b><small>${when(it.created)} · ${it.kind === 'image' ? 'ภาพ' : esc(it.voice || '')}${it.kind === 'audio' ? ' · มีไฟล์เสียง' : ''}</small></div>
       ${it.kind === 'audio' ? `<button class="ib" data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>` : ''}
       <button class="ib" data-open aria-label="เปิด"><svg class="i"><use href="#i-refresh"/></svg></button>
@@ -785,7 +785,8 @@ function openAbout(){
     <li class="m">△ เสียงในเครื่อง: ฟรี/ออฟไลน์ แต่<b>บันทึกเป็นไฟล์ไม่ได้</b> คุณภาพขึ้นกับรุ่นมือถือ</li>
     <li class="m">△ เสียง AI อ่านไทยได้ แต่สำเนียงยังไม่เหมือนคนไทย 100% · เครดิตฟรีมีจำกัดต่อวัน</li>
     <li class="m">△ โคลนเสียง: ช้า (รอคิว GPU ฟรี) โควตาจำกัด Space อาจปิด/เปลี่ยนได้ทุกเมื่อ คุณภาพภาษาไทยยังไม่สมบูรณ์ ข้อความยาวจะใช้เวลานานมาก</li>
-    <li class="m">△ สร้างภาพแบบไม่มีคีย์ได้ 1 ภาพต่อ ~15 วินาที อาจมีลายน้ำ คำสั่งภาษาไทยเข้าใจได้น้อยกว่าอังกฤษ</li>
+    <li class="y">✓ สร้างภาพด้วย FLUX บน Hugging Face: ฟรี ไม่มีลายน้ำ (ใช้โควตา GPU ฟรี ถ้าหมดจะสลับไป Pollinations ให้เอง)</li>
+    <li class="m">△ Pollinations โหมดฟรี: 1 ภาพ/~15 วินาที อาจมีลายน้ำ · คำสั่งภาษาไทยได้ผลน้อยกว่าอังกฤษ (FLUX ยิ่งต้องใช้อังกฤษ)</li>
     <li class="n">✗ โคลน “เสียงใครก็ได้” โดยไม่ได้รับอนุญาต — แอปให้ใช้เฉพาะเสียงตัวเองหรือที่เจ้าของยินยอม</li>
     <li class="n">✗ ระบบสมาชิก/จ่ายเงินจริง (ปุ่มโปร = ใส่คีย์ฟรี) · ซิงก์ข้ามเครื่อง (ข้อมูลอยู่ในเครื่องนี้)</li>
     <li class="n">✗ เล่นต่อตอนล็อกจอได้ไม่เสถียร โดยเฉพาะ iPhone</li></ul>
@@ -869,6 +870,7 @@ function chips(box, opts, cur, onPick){
   box.innerHTML = opts.map(o => `<button class="chip ${o[0] == cur ? 'on' : ''}" data-v="${o[0]}">${o[1]}</button>`).join('');
   box.querySelectorAll('.chip').forEach(b => b.onclick = () => { box.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset.v); save(); });
 }
+chips($('#imgEngine'), [['flux','FLUX · ไม่มีลายน้ำ'],['pol','Pollinations · เร็ว']], S.imgEngine, v => S.imgEngine = v);
 chips($('#imgStyle'), IMG_STYLES, S.imgStyle, v => S.imgStyle = v);
 chips($('#imgRatio'), RATIOS.map(r => [r[0], r[0]]), S.imgRatio, v => S.imgRatio = v);
 chips($('#imgCount'), [[1,'1 ภาพ'],[2,'2 ภาพ'],[3,'3 ภาพ'],[4,'4 ภาพ']], S.imgCount, v => { S.imgCount = +v; $('#imgGrid').classList.toggle('one', S.imgCount === 1); });
@@ -898,16 +900,74 @@ function shotActions(div, url, prompt){
   };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
+/* FLUX.1-schnell on a Hugging Face Space: free, no watermark (uses free GPU quota) */
+const FLUX_SPACE = 'black-forest-labs/FLUX.1-schnell';
+let fluxClient = null, fluxPlan = null;
+async function fluxImage(prompt, seed){
+  gradio ||= await import('https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js');
+  if (!fluxClient){
+    try { fluxClient = await gradio.Client.connect(FLUX_SPACE, S.hfToken ? {hf_token: S.hfToken.trim()} : {}); }
+    catch(e){ throw new Error('เชื่อมต่อ FLUX บน Hugging Face ไม่ได้ (Space อาจกำลังหลับ)'); }
+  }
+  if (!fluxPlan){
+    const api = await fluxClient.view_api();
+    const eps = Object.entries(api.named_endpoints || {}).filter(([n, ep]) => (ep.returns || []).some(r => /image/i.test(r.component || '')));
+    const hit = eps.find(([n]) => /infer/i.test(n)) || eps[0];
+    if (!hit) throw new Error('Space FLUX เปลี่ยนรูปแบบ API แล้ว');
+    fluxPlan = {name: hit[0], ps: hit[1].parameters || []};
+  }
+  const st = IMG_STYLES.find(x => x[0] === S.imgStyle)?.[2], [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
+  const full = prompt + (st ? ', ' + st : '');
+  const args = fluxPlan.ps.map(p => {
+    const n = plabel(p);
+    if (/prompt/.test(n) && !/neg/.test(n)) return full;
+    if (/randomize/.test(n)) return false;
+    if (/seed/.test(n)) return seed % 2147483647;
+    if (/width/.test(n)) return w;
+    if (/height/.test(n)) return h;
+    if (/steps/.test(n)) return 4;
+    if (p.parameter_has_default) return p.parameter_default;
+    return p.example_input ?? null;
+  });
+  let res;
+  try { res = await fluxClient.predict(fluxPlan.name, args); }
+  catch(e){
+    const m = String(e?.message || e?.title || JSON.stringify(e));
+    if (/quota|ZeroGPU|GPU/i.test(m)) throw new Error('โควตา GPU ฟรีของ Hugging Face หมดชั่วคราว');
+    throw new Error('FLUX ล้มเหลว: ' + m.slice(0, 120));
+  }
+  const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url || x.path));
+  const url = typeof out === 'string' ? out : out?.url;
+  if (!url) throw new Error('FLUX ไม่ได้ส่งภาพกลับมา');
+  const r = await fetch(url); if (!r.ok) throw new Error('ดาวน์โหลดภาพไม่ได้ (' + r.status + ')');
+  return r.blob();
+}
+function showShot(div, im, url, prompt, note){
+  im.alt = prompt;
+  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button></div>` + (note ? `<div class="ld" style="position:absolute;left:8px;top:8px;padding:3px 8px;background:rgba(6,10,32,.75);border-radius:8px;font-size:11px">${note}</div>` : '');
+  div.prepend(im); shotActions(div, url, prompt);
+}
 async function renderShot(div, prompt, seed){
-  let url = imgUrl(prompt, seed);
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาด…</div>`;
+  const msg = t => { const l = div.querySelector('.ld'); if (l) l.lastChild.textContent = t; };
   try {
-    let im;
+    if (S.imgEngine === 'flux'){
+      try {
+        msg('กำลังวาดด้วย FLUX (รอคิว GPU ฟรี)…');
+        const blob = await fluxImage(prompt, seed);
+        const url = URL.createObjectURL(blob); const im = await loadImg(url);
+        showShot(div, im, url, prompt);
+        addHistory({kind:'image', prompt, blob});
+        return;
+      } catch(e){
+        toast(e.message + ' — สลับไปใช้ Pollinations (อาจมีลายน้ำ)', true);
+        msg('FLUX ไม่ว่าง กำลังใช้ตัวสำรอง…');
+      }
+    }
+    let url = imgUrl(prompt, seed), im;
     try { im = await loadImg(url); }
-    catch(e){ if (!S.polKey) throw e; url = imgUrl(prompt, seed, true); div.querySelector('.ld').lastChild.textContent = 'คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'; im = await loadImg(url); }
-    im.alt = prompt;
-    div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button></div>`;
-    div.prepend(im); shotActions(div, url, prompt);
+    catch(e){ if (!S.polKey) throw e; url = imgUrl(prompt, seed, true); msg('คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'); im = await loadImg(url); }
+    showShot(div, im, url, prompt, S.imgEngine === 'flux' ? 'ตัวสำรอง' : '');
     addHistory({kind:'image', prompt, url});
   } catch(e){
     div.innerHTML = `<div class="ld">${esc(e.message)}<br><button class="btn sm alt" style="margin-top:8px">ลองใหม่</button></div>`;
@@ -920,13 +980,14 @@ $('#btnImg').onclick = async () => {
   const btn = $('#btnImg'); btn.classList.add('busy'); btn.disabled = true;
   const grid = $('#imgGrid'); grid.innerHTML = ''; grid.classList.toggle('one', S.imgCount === 1);
   const shots = Array.from({length: S.imgCount}, () => { const d = document.createElement('div'); d.className = 'shot'; d.innerHTML = '<div class="ld">รอคิว…</div>'; grid.appendChild(d); return d; });
-  if (S.polKey) await Promise.all(shots.map(d => renderShot(d, prompt, Math.floor(Math.random() * 1e9))));
+  const seeds = shots.map(() => Math.floor(Math.random() * 1e9));
+  if (S.imgEngine === 'pol' && S.polKey) await Promise.all(shots.map((d, i) => renderShot(d, prompt, seeds[i])));
   else for (let i = 0; i < shots.length; i++){
-    if (i){ for (let s = 15; s > 0; s--){ $('#imgStatus').textContent = `โหมดฟรีไม่มีคีย์: รอ ${s} วินาทีก่อนภาพถัดไป`; await sleep(1000); } }
+    if (i && S.imgEngine === 'pol'){ for (let s = 15; s > 0; s--){ $('#imgStatus').textContent = `โหมดฟรีไม่มีคีย์: รอ ${s} วินาทีก่อนภาพถัดไป`; await sleep(1000); } }
     $('#imgStatus').textContent = `กำลังวาดภาพที่ ${i+1}/${shots.length}`;
-    await renderShot(shots[i], prompt, Math.floor(Math.random() * 1e9));
+    await renderShot(shots[i], prompt, seeds[i]);
   }
-  $('#imgStatus').textContent = S.polKey ? '' : 'ใส่คีย์ Pollinations ฟรีในตั้งค่า เพื่อสร้างหลายภาพพร้อมกันและไม่มีลายน้ำ';
+  $('#imgStatus').textContent = S.imgEngine === 'flux' ? 'FLUX: ไม่มีลายน้ำ · ใช้โควตา GPU ฟรีของ Hugging Face (ใส่ HF token ในตั้งค่าเพื่อได้โควตาเพิ่ม)' : '';
   btn.classList.remove('busy'); btn.disabled = false; imgBusy = false;
 };
 
