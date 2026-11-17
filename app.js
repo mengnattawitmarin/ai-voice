@@ -72,11 +72,14 @@ const AI_VOICES = [
   ['onyx','เสียงผู้ชาย ทุ้ม','หนักแน่น เหมาะอ่านข่าว'],
   ['fable','เสียงนักเล่าเรื่อง','มีสีสัน สำเนียงอังกฤษ'],
 ];
-const LOCAL_VOICES = [
-  ['Tanotfin/mms-thai-female-podcast-spk0-stable2-onnx','เสียงผู้หญิงไทย (พอดแคสต์)','th'],
-  ['Tanotfin/mms-tts-2081-M-stable-onnx','เสียงไทย MMS (แบบ M)','th'],
-  ['Tanotfin/mms-tts-2081-FM-stable-onnx','เสียงไทย MMS (แบบ FM)','th'],
-  ['Xenova/mms-tts-eng','English voice (MMS)','en'],
+const LOCAL_VOICES = [  // mirrored in this repo's "models" branch (ONNX, transformers.js)
+  ['th-female-v2','เสียงผู้หญิงไทย 1','th','ผู้หญิง'],
+  ['th-female-v1','เสียงผู้หญิงไทย 2','th','ผู้หญิง'],
+  ['th-male-v2','เสียงผู้ชายไทย 1','th','ผู้ชาย'],
+  ['th-male-v1','เสียงผู้ชายไทย 2','th','ผู้ชาย'],
+  ['th-male-narrator','เสียงผู้ชาย นักบรรยาย','th','ผู้ชาย'],
+  ['th-mms','เสียงผู้ชาย MMS มาตรฐาน','th','ผู้ชาย'],
+  ['en-mms','English voice (MMS, male)','en','ผู้ชาย'],
 ];
 const SPACES = [
   ['pythonlearnreal/F5-TTS-THAI','F5-TTS ภาษาไทย','เหมาะกับภาษาไทย'],
@@ -297,7 +300,7 @@ $('#btnVoice').onclick = () => {
   const locs = LOCAL_VOICES.filter(l => l[2] === S.lang);
   if (locs.length){
     h += `<h4>เสียง AI ฟรี ไม่ต้องใช้คีย์ <span class="tag ok">แนะนำ</span></h4>`;
-    h += locs.map(l => row('local:'+l[0], esc(l[1]), 'ประมวลผลในมือถือ · โหลดโมเดลครั้งแรก ~110MB · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
+    h += locs.map(l => row('local:'+l[0], esc(l[1]) + ` <span class="tag">${l[3]}</span>`, 'ฟรี ออฟไลน์หลังโหลดครั้งแรก (~115MB) · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
   }
   h += `<h4>เสียง AI คุณภาพสูง ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
   h += AI_VOICES.map(a => row('ai:'+a[0], esc(a[1]) + ` <span class="tag">${a[0]}</span>`, esc(a[2]) + ' · ดาวน์โหลด MP3 ได้', v.type==='ai' && v.id===a[0])).join('');
@@ -610,7 +613,7 @@ function estimateVoice(v, chars){
   if (v.type === 'device') return {first: 0, total: 0, listen, text: `⏱ เริ่มอ่านทันที · ฟังจบประมาณ ${fmtDur(listen)} · เสียงในเครื่อง`};
   const k = engineKey(v), sp = speedOf(k), firstChars = Math.min(chars, v.type === 'local' ? 140 : 300);
   let over = 0, note = '';
-  if (v.type === 'local' && !LS.get('dl.' + v.id, false)){ over = 110 * 8 / Math.max(SPEC?.net || 10, 8) + 5; note = ` · ครั้งแรกโหลดโมเดล ~${fmtDur(over)}`; }
+  if (v.type === 'local' && !LS.get('dl.' + v.id, false)){ over = 115 * 8 / Math.max(SPEC?.net || 10, 8) + 5; note = ` · ครั้งแรกโหลดโมเดล ~${fmtDur(over)}`; }
   if (k === 'ai') over = 2;
   if (k === 'clone-hf'){ over = 20; note = ' · อาจต้องรอคิวเพิ่ม'; }
   if (k === 'clone-server' && SERVER_INFO && !SERVER_INFO.tts_loaded){ over = 40; note = ' · ครั้งแรกคอมต้องโหลดโมเดล'; }
@@ -1084,7 +1087,7 @@ function openAbout(){
     <li class="y">✓ พูดเพื่อพิมพ์ (ไมค์) · ปรับความเร็ว ระดับเสียง โทน รูปแบบการอ่าน · 13 ภาษา</li>
     <li class="y">✓ เสียง AI ไทยฟรี ไม่ต้องใช้คีย์ (ประมวลผลในมือถือ) ดาวน์โหลด WAV ได้</li>
     <li class="y">✓ เสียง AI 6 แบบของ Pollinations ดาวน์โหลด MP3 (ต้องมีคีย์ + Pollen)</li>
-    <li class="m">△ เสียง AI ฟรีในเครื่อง: โหลดโมเดล ~110MB ครั้งแรก มือถือรุ่นเก่าอาจช้า ตัวเลข/คำอังกฤษในข้อความไทยอาจอ่านไม่ถูก</li>
+    <li class="m">△ เสียง AI ฟรีในเครื่อง (หญิง 2 · ชาย 4): โหลดโมเดล ~115MB ต่อเสียงครั้งแรก แล้วใช้ออฟไลน์ได้ · โมเดล MMS เป็นสัญญาอนุญาต CC-BY-NC (ห้ามใช้เชิงพาณิชย์) มือถือรุ่นเก่าอาจช้า ตัวเลข/คำอังกฤษในข้อความไทยอาจอ่านไม่ถูก</li>
     <li class="y">✓ โคลนเสียงจากคลิป 6–15 วินาที ผ่าน F5-TTS บน Hugging Face (ฟรี)</li>
     <li class="y">✓ สร้างภาพจากข้อความ 8 สไตล์ 4 สัดส่วน ดาวน์โหลด/แชร์ได้</li>
     <li class="y">✓ ประวัติการใช้งาน · ติดตั้งเป็นแอปบนมือถือ (PWA)</li>
