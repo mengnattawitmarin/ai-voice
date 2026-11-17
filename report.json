@@ -1,0 +1,82 @@
+{
+ "th-mms": {
+  "repo": "payam1394/traxlate-mms-tts-tha",
+  "kind": "mirror",
+  "tok_match": true,
+  "sec": 7.26,
+  "f0": 107.5,
+  "ok": true,
+  "size": 114251813,
+  "gender": "male"
+ },
+ "en-mms": {
+  "repo": "Xenova/mms-tts-eng",
+  "kind": "mirror",
+  "tok_match": true,
+  "sec": 3.15,
+  "f0": 90.9,
+  "ok": true,
+  "size": 114258806,
+  "gender": "male"
+ },
+ "th-male-v2": {
+  "repo": "VIZINTZOR/MMS-TTS-THAI-MALEV2",
+  "kind": "converted",
+  "tok_match": true,
+  "sec": 4.16,
+  "torch_sec": 4.16,
+  "dynamic_ok": true,
+  "f0": 128.2,
+  "ok": true,
+  "size": 114260926,
+  "gender": "male"
+ },
+ "th-male-narrator": {
+  "repo": "VIZINTZOR/MMS-TTS-THAI-MALE-NARRATOR",
+  "kind": "converted",
+  "tok_match": true,
+  "sec": 5.04,
+  "torch_sec": 5.12,
+  "dynamic_ok": true,
+  "f0": 133.1,
+  "ok": true,
+  "size": 114260926,
+  "gender": "male"
+ },
+ "th-male-v1": {
+  "repo": "VIZINTZOR/MMS-TTS-THAI-MALEV1",
+  "kind": "converted",
+  "tok_match": true,
+  "sec": 4.42,
+  "torch_sec": 4.34,
+  "dynamic_ok": true,
+  "f0": 126.4,
+  "ok": true,
+  "size": 114260926,
+  "gender": "male"
+ },
+ "th-female-v2": {
+  "repo": "VIZINTZOR/MMS-TTS-THAI-FEMALEV2",
+  "kind": "converted",
+  "tok_match": true,
+  "sec": 4.99,
+  "torch_sec": 4.95,
+  "dynamic_ok": true,
+  "f0": 218.8,
+  "ok": true,
+  "size": 114260926,
+  "gender": "female"
+ },
+ "th-female-v1": {
+  "repo": "VIZINTZOR/MMS-TTS-THAI-FEMALEV1",
+  "kind": "converted",
+  "tok_match": true,
+  "sec": 5.07,
+  "torch_sec": 5.01,
+  "dynamic_ok": true,
+  "f0": 208.9,
+  "ok": true,
+  "size": 114260926,
+  "gender": "female"
+ }
+}
