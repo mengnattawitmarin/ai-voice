@@ -36,7 +36,7 @@ const db = (() => {
 const S = Object.assign({
   polKey:'', hfToken:'', space:'pythonlearnreal/F5-TTS-THAI',
   lang:'th', tone:1, style:'natural', rate:1, vol:1, voice:null,
-  cloneEngine:'hf', localDev:'auto', serverUrl:'', macSave:true, imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
+  cloneEngine:'hf', localDev:'auto', serverUrl:'', macSave:true, commercial:true, gKey:'', azKey:'', azRegion:'southeastasia', allowOverFree:false, cloneBase:null, imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
 
@@ -266,13 +266,111 @@ $('#btnFetch').onclick = async () => {
 /* ---------------- voices ---------------- */
 const synth = window.speechSynthesis;
 let devVoices = [], clones = [];
-function loadDevVoices(){ if (synth) { devVoices = synth.getVoices(); renderVoice(); } }
+function loadDevVoices(){ if (synth) { devVoices = synth.getVoices(); setTimeout(renderVoice); } }
 if (synth){ loadDevVoices(); synth.onvoiceschanged = loadDevVoices; }
 db.all('clones').then(c => { clones = c.sort((a,b) => b.created - a.created); renderVoice(); });
 
 function devForLang(){ return devVoices.filter(v => v.lang.toLowerCase().replace('_','-').startsWith(S.lang)); }
+/* ---------------- licences: what can be used commercially ---------------- */
+const LIC = {
+  device: {ok:null, t:'ไม่ยืนยัน (ขึ้นกับระบบมือถือ) · บันทึกเป็นไฟล์ไม่ได้'},
+  local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS (CC-BY-NC)'},
+  ai: {ok:null, t:'ไม่ยืนยัน — ตรวจเงื่อนไข Pollinations เอง'},
+  gcloud: {ok:true, t:'เชิงพาณิชย์ได้ — Google Cloud TTS'},
+  azure: {ok:true, t:'เชิงพาณิชย์ได้ — Microsoft Azure TTS'},
+  'clone-hf': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'},
+  'clone-server': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'},
+  'clone-openvoice': {ok:true, t:'เชิงพาณิชย์ได้ — OpenVoice V2 (MIT) + เสียงต้นทาง Google/Azure'},
+  'img-flux': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell (Apache 2.0)'},
+  'img-pol': {ok:null, t:'ไม่ยืนยัน — ตรวจเงื่อนไข Pollinations เอง'},
+};
+function lic(k){
+  if (k === 'img-server'){ const c = SERVER_INFO?.image_commercial; return c === false ? {ok:false, t:'ส่วนตัวเท่านั้น — โมเดลภาพบนคอมไม่อนุญาตเชิงพาณิชย์'} : c == null && SERVER_INFO ? {ok:null, t:'ไม่ยืนยัน — ' + (SERVER_INFO.image_model || '')} : {ok:true, t:'เชิงพาณิชย์ได้ — Segmind-Vega (Apache 2.0)'}; }
+  return LIC[k] || {ok:null, t:'ไม่ยืนยัน'};
+}
+const licTag = k => { const l = lic(k); return `<span class="tag ${l.ok ? 'ok' : l.ok === false ? 'bad' : 'warn'}">${l.ok ? '💼 เชิงพาณิชย์ได้' : l.ok === false ? '🚫 ส่วนตัว' : '❔ ไม่ยืนยัน'}</span>`; };
+const allowed = k => !S.commercial || lic(k).ok === true;
+const cloneMode = () => S.cloneEngine === 'openvoice' ? 'openvoice' : S.cloneEngine === 'server' ? 'server' : 'hf';
+const voiceLicKey = v => v.type === 'clone' ? 'clone-' + cloneMode() : v.type;
+function enforceCommercial(){ if (!S.commercial) return; if (!allowed('clone-' + cloneMode())) S.cloneEngine = 'openvoice'; if (!allowed('img-' + S.imgEngine)) S.imgEngine = 'flux'; save(); }
+
+/* ---------------- commercial cloud voices: Google Cloud TTS + Azure TTS ---------------- */
+const G_FALLBACK = [['th-TH-Chirp3-HD-Charon','MALE'],['th-TH-Chirp3-HD-Puck','MALE'],['th-TH-Chirp3-HD-Kore','FEMALE'],['th-TH-Chirp3-HD-Aoede','FEMALE'],['th-TH-Neural2-C','FEMALE'],['th-TH-Standard-A','FEMALE']];
+const AZ_FALLBACK = [['th-TH-NiwatNeural','Male'],['th-TH-PremwadeeNeural','Female'],['th-TH-AcharaNeural','Female']];
+let gVoices = LS.get('gVoices', null), azVoices = LS.get('azVoices', null);
+const genderTh = g => /^m/i.test(g || '') ? 'ผู้ชาย' : /^f/i.test(g || '') ? 'ผู้หญิง' : 'กลาง';
+const gList = () => (gVoices && gVoices.length ? gVoices : G_FALLBACK).filter(v => v[0].toLowerCase().startsWith(lang()[2].toLowerCase()));
+const azList = () => (azVoices && azVoices.length ? azVoices : AZ_FALLBACK).filter(v => v[0].toLowerCase().startsWith(lang()[2].toLowerCase()));
+const gPretty = n => n.replace(/^[a-z]{2,3}-[A-Z]{2}-/, '').replace(/-/g, ' ');
+const azPretty = n => n.replace(/^[a-z]{2,3}-[A-Z]{2}-/, '').replace(/Neural$/, '');
+const gTier = n => /Chirp|Neural2|Studio|Polyglot|Journey/i.test(n) ? ['gcloud-premium', 1e6] : ['gcloud-std', 4e6];
+const ym = () => new Date().toISOString().slice(0, 7);
+const usageGet = k => LS.get('use.' + ym(), {})[k] || 0;
+function usageAdd(k, n){ const u = LS.get('use.' + ym(), {}); u[k] = (u[k] || 0) + n; LS.set('use.' + ym(), u); }
+function secsToNextMonth(){ const d = new Date(); return (new Date(d.getFullYear(), d.getMonth() + 1, 1) - d) / 1000; }
+function usageGuard(k, n, limit, qk){
+  if (S.allowOverFree || usageGet(k) + n <= limit) return;
+  Q.mark(qk, 'free-limit', secsToNextMonth());
+  throw new Error(`ครบโควตาฟรีเดือนนี้แล้ว (นับในแอป ${usageGet(k).toLocaleString('th-TH')}/${limit.toLocaleString('th-TH')} ตัวอักษร) — ใช้ต่อจะถูกคิดเงิน · เปิด “ยอมใช้เกินโควตาฟรี” ในตั้งค่าถ้าต้องการ`);
+}
+async function loadCloudVoices(){
+  if (S.gKey) try {
+    const r = await fetch(`https://texttospeech.googleapis.com/v1/voices?key=${encodeURIComponent(S.gKey)}`); const d = await r.json();
+    if (!r.ok) throw new Error(d.error?.message || r.status);
+    gVoices = (d.voices || []).filter(v => /^(th|en)-/.test(v.name)).map(v => [v.name, v.ssmlGender]); LS.set('gVoices', gVoices);
+  } catch(e){ toast('ดึงรายชื่อเสียง Google ไม่ได้: ' + e.message, true); }
+  if (S.azKey) try {
+    const r = await fetch(`https://${S.azRegion}.tts.speech.microsoft.com/cognitiveservices/voices/list`, {headers:{'Ocp-Apim-Subscription-Key': S.azKey}});
+    if (!r.ok) throw new Error(r.status === 401 ? 'คีย์หรือภูมิภาคไม่ถูกต้อง' : 'HTTP ' + r.status);
+    azVoices = (await r.json()).filter(v => /^(th|en)-/.test(v.ShortName)).map(v => [v.ShortName, v.Gender]); LS.set('azVoices', azVoices);
+  } catch(e){ toast('ดึงรายชื่อเสียง Azure ไม่ได้: ' + e.message, true); }
+  renderVoice();
+}
+async function gcloudTTS(text, name){
+  if (!S.gKey) throw new Error('ใส่คีย์ Google Cloud ในตั้งค่าก่อน');
+  const [uk, lim] = gTier(name); usageGuard(uk, text.length, lim, 'gcloud');
+  let r, d;
+  try {
+    r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(S.gKey), {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({input:{text}, voice:{languageCode: name.split('-').slice(0, 2).join('-'), name}, audioConfig:{audioEncoding:'MP3'}})});
+    d = await r.json().catch(() => ({}));
+  } catch(e){ throw new Error('เชื่อมต่อ Google Cloud ไม่ได้ — ตรวจอินเทอร์เน็ต'); }
+  if (!r.ok){
+    const m = d.error?.message || 'HTTP ' + r.status;
+    if (r.status === 429 || /quota|rate limit/i.test(m)){ Q.mark('gcloud', m, 60); throw new Error(quotaText('gcloud')); }
+    if (r.status === 403 || /key|billing|disabled/i.test(m)) throw new Error('Google Cloud: ' + m + ' — ตรวจว่าเปิด Cloud Text-to-Speech API + ผูกบัญชีชำระเงิน และคีย์อนุญาตเว็บนี้');
+    throw new Error('Google TTS ล้มเหลว: ' + m);
+  }
+  usageAdd(uk, text.length); Q.clear('gcloud');
+  const bin = atob(d.audioContent), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], {type:'audio/mpeg'});
+}
+const xmlEsc = t => t.replace(/[<>&'"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c]));
+async function azureTTS(text, name){
+  if (!S.azKey) throw new Error('ใส่คีย์ Azure Speech ในตั้งค่าก่อน');
+  usageGuard('azure', text.length, 5e5, 'azure');
+  const loc = name.split('-').slice(0, 2).join('-');
+  let r;
+  try {
+    r = await fetch(`https://${S.azRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {method:'POST',
+      headers:{'Ocp-Apim-Subscription-Key': S.azKey, 'Content-Type':'application/ssml+xml', 'X-Microsoft-OutputFormat':'audio-24khz-48kbitrate-mono-mp3'},
+      body: `<speak version='1.0' xml:lang='${loc}'><voice name='${name}'>${xmlEsc(text)}</voice></speak>`});
+  } catch(e){ throw new Error('เชื่อมต่อ Azure ไม่ได้ — ตรวจอินเทอร์เน็ต/ภูมิภาค'); }
+  if (!r.ok){
+    if (r.status === 429 || r.status === 403){ Q.mark('azure', 'quota', +r.headers.get('retry-after') || (r.status === 403 ? secsToNextMonth() : 60)); throw new Error(quotaText('azure')); }
+    if (r.status === 401) throw new Error('Azure: คีย์หรือภูมิภาคไม่ถูกต้อง (ตั้งค่า)');
+    throw new Error('Azure TTS ล้มเหลว (' + r.status + ')');
+  }
+  usageAdd('azure', text.length); Q.clear('azure');
+  return r.blob();
+}
+const commercialVoices = () => [...(S.gKey ? gList().map(v => ({type:'gcloud', id:v[0], g:v[1]})) : []), ...(S.azKey ? azList().map(v => ({type:'azure', id:v[0], g:v[1]})) : [])];
+
 function curVoice(){
-  const v = S.voice;
+  let v = S.voice;
+  if (!v && S.commercial){ const c = commercialVoices()[0]; if (c) v = {type:c.type, id:c.id}; }
+  if (v?.type === 'gcloud'){ const g = (gVoices || G_FALLBACK).find(x => x[0] === v.id); return {type:'gcloud', id:v.id, name: gPretty(v.id) + ' (Google)', desc: genderTh(g?.[1]) + ' · Google Cloud · 💼 เชิงพาณิชย์ได้'}; }
+  if (v?.type === 'azure'){ const a = (azVoices || AZ_FALLBACK).find(x => x[0] === v.id); return {type:'azure', id:v.id, name: azPretty(v.id) + ' (Azure)', desc: genderTh(a?.[1]) + ' · Microsoft Azure · 💼 เชิงพาณิชย์ได้'}; }
   if (v?.type === 'ai'){ const a = AI_VOICES.find(x => x[0] === v.id) || AI_VOICES[0]; return {type:'ai', id:a[0], name:a[1], desc:a[2] + ' · เสียง AI ดาวน์โหลดได้'}; }
   if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้'}; }
   if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงโคลน · ' + (c.tested ? 'ทดสอบแล้ว' : 'ยังไม่ได้ทดสอบ'), rec:c}; }
@@ -297,18 +395,25 @@ $('#btnVoice').onclick = () => {
   const list = devForLang();
   const row = (k, n, d, on) => `<button class="opt ${on?'on':''}" data-k="${esc(k)}"><span class="dot"></span><span class="t"><b>${n}</b><small>${d}</small></span></button>`;
   let h = sheetHead('เลือกเสียง');
+  h += `<label class="switch" style="margin:0 0 6px"><span>💼 โหมดเชิงพาณิชย์ (ทำวิดีโอหารายได้)<br><small style="color:var(--mut)">ดาวน์โหลด/แชร์/บันทึกได้เฉพาะเสียงที่สัญญาอนุญาตเชิงพาณิชย์</small></span><input type="checkbox" id="vComm" ${S.commercial ? 'checked' : ''}></label>`;
+  h += `<h4>💼 ใช้หารายได้ได้ — Google Cloud TTS</h4>`;
+  h += S.gKey ? gList().map(g => row('gcloud:'+g[0], esc(gPretty(g[0])) + ` <span class="tag">${genderTh(g[1])}</span> ` + licTag('gcloud'), 'คุณภาพสูง · ' + (gTier(g[0])[1] === 1e6 ? 'ฟรี 1 ล้านตัวอักษร/เดือน' : 'ฟรี 4 ล้านตัวอักษร/เดือน'), v.type==='gcloud' && v.id===g[0])).join('')
+    : `<button class="opt" data-setc><span class="dot"></span><span class="t"><b>＋ ตั้งค่า Google Cloud TTS</b><small>ไทย ชาย/หญิง · ฟรีสูงสุด 4 ล้านตัวอักษร/เดือน · ใช้เชิงพาณิชย์ได้</small></span></button>`;
+  h += `<h4>💼 ใช้หารายได้ได้ — Microsoft Azure TTS</h4>`;
+  h += S.azKey ? azList().map(a => row('azure:'+a[0], esc(azPretty(a[0])) + ` <span class="tag">${genderTh(a[1])}</span> ` + licTag('azure'), 'Neural · ฟรี 0.5 ล้านตัวอักษร/เดือน', v.type==='azure' && v.id===a[0])).join('')
+    : `<button class="opt" data-setc><span class="dot"></span><span class="t"><b>＋ ตั้งค่า Azure TTS</b><small>เปรมวดี (หญิง) · นิวัฒน์ (ชาย) · อัจฉรา (หญิง) · ฟรี 0.5 ล้านตัวอักษร/เดือน</small></span></button>`;
   const locs = LOCAL_VOICES.filter(l => l[2] === S.lang);
   if (locs.length){
-    h += `<h4>เสียง AI ฟรี ไม่ต้องใช้คีย์ <span class="tag ok">แนะนำ</span></h4>`;
+    h += `<h4>เสียง AI ฟรีในเครื่อง ไม่ต้องใช้คีย์ ${licTag('local')}</h4>`;
     h += locs.map(l => row('local:'+l[0], esc(l[1]) + ` <span class="tag">${l[3]}</span>`, 'ฟรี ออฟไลน์หลังโหลดครั้งแรก (~115MB) · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
   }
-  h += `<h4>เสียง AI คุณภาพสูง ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
+  h += `<h4>เสียง AI Pollinations ${licTag('ai')} ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
   h += AI_VOICES.map(a => row('ai:'+a[0], esc(a[1]) + ` <span class="tag">${a[0]}</span>`, esc(a[2]) + ' · ดาวน์โหลด MP3 ได้', v.type==='ai' && v.id===a[0])).join('');
   if (!keyOk) h += `<p class="hint">เสียง AI ใช้ Pollinations — <a href="#" data-set>ใส่คีย์ฟรีในตั้งค่า</a> (สมัครฟรี) อ่านภาษาไทยได้แต่สำเนียงอาจยังไม่เป๊ะ</p>`;
-  h += `<h4>เสียงที่โคลนไว้</h4>`;
-  h += clones.length ? clones.map(c => row('clone:'+c.id, esc(c.name), 'เสียงโคลน · F5-TTS', v.type==='clone' && v.id===c.id)).join('') : '';
+  h += `<h4>เสียงที่โคลนไว้ ${licTag('clone-' + cloneMode())}</h4>`;
+  h += clones.length ? clones.map(c => row('clone:'+c.id, esc(c.name), 'เสียงโคลน · ' + (cloneMode() === 'openvoice' ? 'OpenVoice บนคอม' : 'F5-TTS'), v.type==='clone' && v.id===c.id)).join('') : '';
   h += `<button class="opt" data-gclone><span class="dot"></span><span class="t"><b>＋ โคลนเสียงใหม่</b><small>อัดเสียงตัวเอง 10 วินาที</small></span></button>`;
-  h += `<h4>เสียงในเครื่อง (${esc(lang()[1])}) · ฟรี ออฟไลน์</h4>`;
+  h += `<h4>เสียงระบบในเครื่อง (${esc(lang()[1])}) ${licTag('device')}</h4>`;
   h += list.length ? list.map(d => row('device:'+d.voiceURI, esc(prettyDev(d)), d.localService ? 'อยู่ในเครื่อง' : 'ออนไลน์', v.type==='device' && v.id===d.voiceURI)).join('')
     : `<p class="hint">ไม่มีเสียง${esc(lang()[1])}ในเครื่องนี้ — iPhone: ตั้งค่า › การช่วยการเข้าถึง › เนื้อหาที่พูด › เสียง / Android: ตั้งค่า › การแปลงข้อความเป็นเสียง</p>`;
   openSheet(h, el => {
@@ -317,6 +422,8 @@ $('#btnVoice').onclick = () => {
       if (type === 'ai' && !S.polKey) toast('อย่าลืมใส่คีย์ Pollinations ในตั้งค่า ถ้าเล่นไม่ได้');
     });
     el.querySelector('[data-gclone]').onclick = () => go('clone');
+    el.querySelector('#vComm').onchange = e => { S.commercial = e.target.checked; enforceCommercial(); save(); renderVoice(); renderEngines(); toast(S.commercial ? 'เปิดโหมดเชิงพาณิชย์แล้ว' : 'ปิดโหมดเชิงพาณิชย์แล้ว'); };
+    el.querySelectorAll('[data-setc]').forEach(b => b.onclick = () => openSettings());
     el.querySelector('[data-set]')?.addEventListener('click', e => { e.preventDefault(); openSettings(true); });
   });
 };
@@ -408,7 +515,7 @@ function ui(){
 function prepare(v, text){
   const key = v.type + ':' + v.id + '|' + text;
   if (P.key !== key){
-    const max = v.type === 'device' ? 180 : v.type === 'ai' ? 380 : v.type === 'local' ? 140 : 200;
+    const max = v.type === 'device' ? 180 : (v.type === 'ai' || v.type === 'gcloud' || v.type === 'azure') ? 380 : v.type === 'local' ? 140 : 200;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
   }
   P.voice = v;
@@ -508,6 +615,7 @@ async function playRemote(){
 
 /* ---------------- engines ---------------- */
 async function synthesize(v, text){
+  if (v.type === 'gcloud' || v.type === 'azure'){ const t0 = performance.now(); const b = await (v.type === 'gcloud' ? gcloudTTS(text, v.id) : azureTTS(text, v.id)); SPEED.learn(v.type, (performance.now() - t0) / Math.max(1, text.length)); return b; }
   if (v.type === 'local') return localTTS(text, v.id);
   if (v.type === 'ai'){ const t0 = performance.now(); const b = await pollinationsTTS(text, v.id); SPEED.learn('ai', (performance.now() - t0) / Math.max(1, text.length)); return b; }
   if (v.type === 'clone') return cloneTTS(text, v.rec);
@@ -518,6 +626,8 @@ const QUOTA_NAMES = {
   pollinations: 'เครดิต Pollinations (คีย์ของคุณ)',
   polfree: 'Pollinations โหมดฟรี',
   hf: 'GPU ฟรีของ Hugging Face (โคลนเสียง + FLUX)',
+  gcloud: 'Google Cloud TTS (โควตาฟรีรายเดือน)',
+  azure: 'Azure TTS (โควตาฟรีรายเดือน)',
 };
 const Q = {
   all(){ const q = LS.get('quota', {}), now = Date.now(); let ch = false; for (const k in q) if (q[k].until && q[k].until < now){ delete q[k]; ch = true; } if (ch) LS.set('quota', q); return q; },
@@ -544,13 +654,14 @@ function renderQuota(){
   const box = $('#quota'); if (!box) return;
   try { renderEngines(); } catch(e){}
   const page = curPage(), ks = [];
-  if (page === 'tts'){ const v = curVoice(); if (v.type === 'ai') ks.push('pollinations'); if (v.type === 'clone' && S.cloneEngine !== 'server') ks.push('hf'); }
-  if (page === 'clone' && S.cloneEngine !== 'server') ks.push('hf');
+  if (page === 'tts'){ const v = curVoice(); if (v.type === 'ai') ks.push('pollinations'); if (v.type === 'gcloud' || v.type === 'azure') ks.push(v.type); if (v.type === 'clone' && cloneMode() === 'hf') ks.push('hf'); }
+  if (page === 'clone' && cloneMode() === 'hf') ks.push('hf');
   if (page === 'image'){ if (S.imgEngine === 'flux') ks.push('hf'); if (S.imgEngine === 'pol') ks.push(S.polKey && !Q.hit('pollinations') ? 'pollinations' : 'polfree'); if (S.imgEngine === 'pol' && S.polKey) ks.push('pollinations'); }
   const hits = [...new Set(ks)].filter(k => Q.hit(k));
   box.innerHTML = hits.map(k => {
     const acts = [];
     if (page === 'tts' && k === 'pollinations') acts.push(['local', 'ใช้เสียง AI ฟรีในเครื่อง']);
+    if (page === 'tts' && (k === 'gcloud' || k === 'azure')){ const o = commercialVoices().find(c => c.type !== k); if (o) acts.push(['sw:' + o.type + ':' + o.id, 'สลับไป ' + (o.type === 'gcloud' ? 'Google' : 'Azure')]); }
     if (k === 'hf' && page !== 'image') acts.push(['cloneServer', 'ใช้คอมของฉัน']);
     if (k === 'hf' && page === 'image'){ acts.push(['imgPol', 'ใช้ Pollinations']); acts.push(['imgServer', 'ใช้คอมของฉัน']); }
     if (page === 'image' && k !== 'hf' && !Q.hit('hf')) acts.push(['imgFlux', 'ใช้ FLUX']);
@@ -561,6 +672,7 @@ function renderQuota(){
     if (a === 'local'){ const l = LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0]; S.voice = {type:'local', id:l[0]}; }
     if (a === 'cloneServer' || a === 'imgServer'){ if (!S.serverUrl) return openProc(); if (a === 'cloneServer') S.cloneEngine = 'server'; else S.imgEngine = 'server'; }
     if (a === 'imgPol') S.imgEngine = 'pol';
+    if (a.startsWith('sw:')){ const [, t, ...id] = a.split(':'); S.voice = {type:t, id:id.join(':')}; }
     if (a === 'imgFlux') S.imgEngine = 'flux';
     if (a === 'proc') return openProc();
     save(); stopAll(); renderEngines(); renderVoice(); renderQuota(); toast('สลับแล้ว');
@@ -587,7 +699,7 @@ const SPEED = {
 };
 let SERVER_INFO = LS.get('serverInfo', null);
 function localDev(){ return S.localDev === 'wasm' ? 'wasm' : S.localDev === 'webgpu' ? 'webgpu' : (SPEC?.gpu ? 'webgpu' : 'wasm'); }
-function engineKey(v){ return v.type === 'local' ? 'local-' + localDev() : v.type === 'ai' ? 'ai' : v.type === 'clone' ? 'clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf') : 'device'; }
+function engineKey(v){ return v.type === 'local' ? 'local-' + localDev() : (v.type === 'ai' || v.type === 'gcloud' || v.type === 'azure') ? v.type : v.type === 'clone' ? 'clone-' + cloneMode() : 'device'; }
 function defMs(k){
   const sp = SPEC || {mobile:true, cores:4};
   const sd = SERVER_INFO?.device;
@@ -595,6 +707,9 @@ function defMs(k){
     case 'local-webgpu': return sp.mobile ? 18 : sp.apple ? 5 : 7;
     case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
     case 'ai': return 12;
+    case 'gcloud': return 6;
+    case 'azure': return 6;
+    case 'clone-openvoice': return 6 + (sd === 'cuda' ? 5 : 30);
     case 'clone-hf': return 60;
     case 'clone-server': return SERVER_INFO?.tts_ms_per_char || (sd === 'cuda' ? 15 : sd === 'cpu' ? 500 : 110);
     case 'img-flux': return 12000;
@@ -605,21 +720,22 @@ function defMs(k){
 }
 function speedOf(k){ const m = SPEED.get(k); return {v: m || defMs(k), measured: !!m}; }
 function whereLabel(k){
-  return ({'local-webgpu':'GPU ในเครื่องนี้', 'local-wasm':'CPU ในเครื่องนี้', 'ai':'API Pollinations', 'clone-hf':'API Hugging Face', 'clone-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : ''),
+  return ({'local-webgpu':'GPU ในเครื่องนี้', 'local-wasm':'CPU ในเครื่องนี้', 'ai':'API Pollinations', 'gcloud':'API Google Cloud', 'azure':'API Azure', 'clone-openvoice':'Google/Azure + OpenVoice บนคอมของฉัน', 'clone-hf':'API Hugging Face', 'clone-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : ''),
     'img-flux':'API FLUX (Hugging Face)', 'img-pol':'API Pollinations', 'img-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : '')})[k] || k;
 }
 function estimateVoice(v, chars){
   const listen = chars / 13.3 / effRate();
   if (v.type === 'device') return {first: 0, total: 0, listen, text: `⏱ เริ่มอ่านทันที · ฟังจบประมาณ ${fmtDur(listen)} · เสียงในเครื่อง`};
   const k = engineKey(v), sp = speedOf(k), firstChars = Math.min(chars, v.type === 'local' ? 140 : 300);
+  const lt = S.commercial && !allowed(voiceLicKey(v)) ? ' · ⚠️ เสียงนี้ใช้หารายได้ไม่ได้' : '';
   let over = 0, note = '';
   if (v.type === 'local' && !LS.get('dl.' + v.id, false)){ over = 115 * 8 / Math.max(SPEC?.net || 10, 8) + 5; note = ` · ครั้งแรกโหลดโมเดล ~${fmtDur(over)}`; }
-  if (k === 'ai') over = 2;
+  if (k === 'ai' || k === 'gcloud' || k === 'azure') over = 2;
   if (k === 'clone-hf'){ over = 20; note = ' · อาจต้องรอคิวเพิ่ม'; }
   if (k === 'clone-server' && SERVER_INFO && !SERVER_INFO.tts_loaded){ over = 40; note = ' · ครั้งแรกคอมต้องโหลดโมเดล'; }
   const first = over + firstChars * sp.v / 1000, total = over + chars * sp.v / 1000;
   const slow = sp.v > 75 / effRate() ? ' · สร้างช้ากว่าเสียงที่เล่น อาจหยุดรอเป็นช่วง ๆ' : '';
-  return {first, total, listen, text: `⏱ เริ่มได้ยินใน ~${fmtDur(first)} · สร้างทั้งหมด ~${fmtDur(total)} · ${whereLabel(k)}${note}${slow} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}`};
+  return {first, total, listen, text: `⏱ เริ่มได้ยินใน ~${fmtDur(first)} · สร้างทั้งหมด ~${fmtDur(total)} · ${whereLabel(k)}${note}${slow} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}${lt}`};
 }
 function estimateImages(n){
   const k = 'img-' + S.imgEngine, sp = speedOf(k);
@@ -798,8 +914,30 @@ function planFromApi(api){
   return {name: best.name, ps: best.ps, ref, gen};
 }
 const cloneTarget = () => S.cloneEngine === 'server' ? S.serverUrl : S.space.trim();
+function cloneBaseVoice(){
+  const list = commercialVoices();
+  return list.find(c => S.cloneBase && c.type === S.cloneBase.type && c.id === S.cloneBase.id) || list.find(c => /^m/i.test(c.g)) || list[0] || null;
+}
+async function openVoiceTTS(text, rec){
+  if (!S.serverUrl) throw new Error('OpenVoice รันบน “คอมของฉัน” — เชื่อมต่อคอมก่อน (ขั้นสูง › ประมวลผล)');
+  const base = cloneBaseVoice();
+  if (!base) throw new Error('ต้องตั้งค่า Google Cloud หรือ Azure ก่อน (ใช้เป็นเสียงต้นทางที่ถูกลิขสิทธิ์)');
+  const src = await synthesize(base, text);
+  const g = await gconnect(S.serverUrl);
+  const t0 = performance.now();
+  let res;
+  try { res = await g.client.predict('/convert_voice', [gradio.handle_file(new File([src], 'src.mp3', {type: src.type})), gradio.handle_file(new File([rec.blob], 'ref.wav', {type: rec.blob.type || 'audio/wav'})), 0.3]); }
+  catch(e){ throw gradioErr(e, S.serverUrl, 'OpenVoice '); }
+  SPEED.learn('clone-openvoice', (performance.now() - t0) / Math.max(1, text.length));
+  const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url));
+  const url = typeof out === 'string' ? out : out?.url;
+  if (!url) throw new Error('คอมไม่ได้ส่งเสียงกลับมา (อัปเดตเซิร์ฟเวอร์: git pull)');
+  const r = await fetch(url); if (!r.ok) throw new Error('ดาวน์โหลดเสียงไม่ได้ (' + r.status + ')');
+  return r.blob();
+}
 async function cloneTTS(text, rec){
   if (!rec) throw new Error('ไม่พบเสียงโคลนนี้แล้ว');
+  if (cloneMode() === 'openvoice') return openVoiceTTS(text, rec);
   const target = cloneTarget();
   if (!isUrl(target) && Q.hit('hf')) throw new Error(quotaText('hf'));
   const g = await gconnect(target), c = g.client;
@@ -866,6 +1004,15 @@ async function buildFile(quiet){
     if (quiet) return null;
     openSheet(sheetHead('บันทึกเสียงเป็นไฟล์') + `<p class="lim">เสียงในเครื่องเล่นได้อย่างเดียว เบราว์เซอร์<b>ไม่อนุญาตให้อัดเป็นไฟล์</b><br>เปลี่ยนเป็น <b>เสียง AI</b> หรือ <b>เสียงโคลน</b> เพื่อดาวน์โหลดเป็น MP3/WAV ได้</p><button class="btn" style="width:100%" id="swAi">ใช้เสียง AI (Nova)</button>`,
       el => el.querySelector('#swAi').onclick = () => { S.voice = {type:'ai', id:'nova'}; save(); renderVoice(); closeAll(); if (!S.polKey) openSettings(true); });
+    return null;
+  }
+  if (S.commercial && !allowed(voiceLicKey(v))){
+    if (quiet) return null;
+    openSheet(sheetHead('💼 โหมดเชิงพาณิชย์') + `<p class="lim">เสียง “${esc(v.name)}” — ${esc(lic(voiceLicKey(v)).t)}<br>จึง<b>ไม่ให้ดาวน์โหลด/แชร์/บันทึก</b>เพื่อป้องกันการนำไปใช้หารายได้โดยผิดสัญญาอนุญาต</p>
+      <button class="btn" style="width:100%" id="cmPick">เลือกเสียง 💼 (Google / Azure)</button><button class="btn alt" style="width:100%;margin-top:8px" id="cmOff">ปิดโหมดเชิงพาณิชย์ (ใช้ส่วนตัว)</button>`, el => {
+      el.querySelector('#cmPick').onclick = () => { closeAll(); setTimeout(() => $('#btnVoice').click(), 250); };
+      el.querySelector('#cmOff').onclick = () => { S.commercial = false; save(); renderEngines(); renderVoice(); closeAll(); toast('ปิดโหมดเชิงพาณิชย์แล้ว — ลองกดอีกครั้ง'); };
+    });
     return null;
   }
   if (P.lastFile && P.key === v.type + ':' + v.id + '|' + text) return P.lastFile;
@@ -967,7 +1114,14 @@ function openSettings(pro){
   const spaceOpts = SPACES.map(s => `<option value="${s[0]}" ${S.space === s[0] ? 'selected' : ''}>${s[1]} — ${s[0]}</option>`).join('') + `<option value="__custom" ${SPACES.some(s => s[0] === S.space) ? '' : 'selected'}>กำหนดเอง…</option>`;
   openSheet(sheetHead(pro ? 'ปลดล็อกฟีเจอร์ AI (ฟรี)' : 'ตั้งค่า & คีย์ API') + `
     ${pro ? `<p class="lim">แอปนี้<b>ไม่มีค่าใช้จ่ายและไม่มีระบบจ่ายเงิน</b> — “โปร” คือการใส่คีย์ฟรีของบริการ AI เอง คีย์จะเก็บไว้ในเครื่องนี้เท่านั้น</p>` : ''}
-    <h4>เสียง AI + สร้างภาพ — Pollinations</h4>
+    <h4>💼 Google Cloud Text-to-Speech (เชิงพาณิชย์ได้)</h4>
+    <input class="inp" id="kG" placeholder="API key (AIza…)" value="${esc(S.gKey)}" autocomplete="off">
+    <p class="hint">ฟรีทุกเดือน: Standard/WaveNet 4 ล้าน · Chirp3 HD/Neural2 1 ล้านตัวอักษร (ต้องผูกบัตร คิดเงินเฉพาะส่วนเกิน) — ใช้ไปเดือนนี้ (นับในเครื่องนี้): Standard ${usageGet('gcloud-std').toLocaleString('th-TH')} · พรีเมียม ${usageGet('gcloud-premium').toLocaleString('th-TH')}<br>วิธีสมัคร: <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank" rel="noopener">เปิด Cloud Text-to-Speech API</a> → APIs &amp; Services › Credentials › Create API key → จำกัดคีย์ให้ใช้ได้เฉพาะ Text-to-Speech API และเว็บ mengnattawitmarin.github.io</p>
+    <h4>💼 Microsoft Azure Speech (เชิงพาณิชย์ได้)</h4>
+    <div class="row2"><input class="inp" id="kAz" placeholder="Speech key" value="${esc(S.azKey)}" autocomplete="off"><select class="inp" id="kAzR" style="max-width:150px">${['southeastasia','eastasia','japaneast','eastus','westeurope'].map(r => `<option ${S.azRegion === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
+    <p class="hint">ระดับฟรี (F0): 0.5 ล้านตัวอักษร/เดือน ไม่คิดเงิน — ใช้ไปเดือนนี้: ${usageGet('azure').toLocaleString('th-TH')} · วิธีสมัคร: <a href="https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices" target="_blank" rel="noopener">สร้าง Speech resource</a> (Pricing tier: Free F0, Region: Southeast Asia) → Keys and Endpoint</p>
+    <label class="check"><input type="checkbox" id="kOver" ${S.allowOverFree ? 'checked' : ''}><span>ยอมใช้เกินโควตาฟรี (Google จะคิดเงินส่วนที่เกิน) — ปกติแอปจะหยุดให้เองเมื่อครบ</span></label>
+    <h4>เสียง AI + สร้างภาพ — Pollinations ❔</h4>
     <input class="inp" id="kPol" placeholder="pk_… (Publishable key)" value="${esc(S.polKey)}" autocomplete="off">
     <p class="hint">สมัครฟรีที่ <a href="https://enter.pollinations.ai" target="_blank" rel="noopener">enter.pollinations.ai</a> → สร้างคีย์ชนิด <b>Publishable (pk_)</b> แล้ววางที่นี่ ไม่ต้องใส่ก็สร้างภาพได้ แต่ช้ากว่า (1 ภาพ/15 วินาที) และเสียง AI ต้องใช้คีย์</p>
     <h4>โคลนเสียง — Hugging Face Space</h4>
@@ -982,8 +1136,8 @@ function openSettings(pro){
   el => {
     const sp = el.querySelector('#kSpace'), spc = el.querySelector('#kSpaceC');
     sp.onchange = () => { spc.hidden = sp.value !== '__custom'; if (!spc.hidden) spc.focus(); };
-    const apply = () => { S.polKey = el.querySelector('#kPol').value.trim(); S.hfToken = el.querySelector('#kHf').value.trim(); S.space = (sp.value === '__custom' ? spc.value : sp.value).trim() || SPACES[0][0]; save(); };
-    el.querySelector('#kSave').onclick = () => { apply(); renderVoice(); closeAll(); toast('บันทึกแล้ว'); };
+    const apply = () => { S.gKey = el.querySelector('#kG').value.trim(); S.azKey = el.querySelector('#kAz').value.trim(); S.azRegion = el.querySelector('#kAzR').value; S.allowOverFree = el.querySelector('#kOver').checked; S.polKey = el.querySelector('#kPol').value.trim(); S.hfToken = el.querySelector('#kHf').value.trim(); S.space = (sp.value === '__custom' ? spc.value : sp.value).trim() || SPACES[0][0]; save(); };
+    el.querySelector('#kSave').onclick = () => { apply(); renderVoice(); renderEngines(); closeAll(); toast('บันทึกแล้ว'); loadCloudVoices(); };
     el.querySelector('#kTest').onclick = async () => {
       apply(); const m = el.querySelector('#kMsg'); m.textContent = 'กำลังเชื่อมต่อ ' + S.space + '…';
       try { const g = await gconnect(S.space.trim()); const plan = g.plans.clone = planFromApi(await g.client.view_api());
@@ -995,10 +1149,22 @@ function openSettings(pro){
   });
 }
 /* ---------------- processing: API vs this device vs my computer ---------------- */
+const licIcon = k => { const l = lic(k); return l.ok ? '💼 ' : l.ok === false ? '🚫 ' : '❔ '; };
 function renderEngines(){
   const hfOut = Q.hit('hf') ? ' · โควตาหมด' : '';
-  chips($('#imgEngine'), [['flux','FLUX · ไม่มีลายน้ำ' + hfOut],['pol','Pollinations' + (Q.hit(S.polKey ? 'pollinations' : 'polfree') ? ' · โควตาหมด' : '')],['server','คอมของฉัน']], S.imgEngine, v => { S.imgEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); });
-  chips($('#cloneEngine'), [['hf','API Hugging Face' + hfOut],['server','คอมของฉัน']], S.cloneEngine, v => { S.cloneEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); renderVoice(); });
+  const gate = (k, fn) => v => { if (!allowed(k(v))){ toast('โหมดเชิงพาณิชย์: ' + lic(k(v)).t + ' — ปิดโหมดได้ที่การ์ดเลือกเสียง', true); renderEngines(); return; } fn(v); };
+  chips($('#imgEngine'), [['flux', licIcon('img-flux') + 'FLUX · ไม่มีลายน้ำ' + hfOut],['pol', licIcon('img-pol') + 'Pollinations' + (Q.hit(S.polKey ? 'pollinations' : 'polfree') ? ' · โควตาหมด' : '')],['server', licIcon('img-server') + 'คอมของฉัน']], S.imgEngine,
+    gate(v => 'img-' + v, v => { S.imgEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); }));
+  chips($('#cloneEngine'), [['openvoice', licIcon('clone-openvoice') + 'OpenVoice (คอมของฉัน)'],['hf', licIcon('clone-hf') + 'F5 · API Hugging Face' + hfOut],['server', licIcon('clone-server') + 'F5 · คอมของฉัน']], S.cloneEngine,
+    gate(v => 'clone-' + v, v => { S.cloneEngine = v; if (v !== 'hf' && !S.serverUrl) openProc(); renderEst(); renderQuota(); renderVoice(); renderCloneBase(); }));
+  renderCloneBase();
+}
+function renderCloneBase(){
+  const sel = $('#cloneBase'); if (!sel) return;
+  const box = $('#cloneBaseBox'); box.hidden = cloneMode() !== 'openvoice';
+  const list = commercialVoices(), cur = cloneBaseVoice();
+  sel.innerHTML = list.length ? list.map(c => `<option value="${c.type}:${esc(c.id)}" ${cur && cur.type === c.type && cur.id === c.id ? 'selected' : ''}>${c.type === 'gcloud' ? 'Google · ' + esc(gPretty(c.id)) : 'Azure · ' + esc(azPretty(c.id))} (${genderTh(c.g)})</option>`).join('') : '<option value="">— ตั้งค่า Google Cloud หรือ Azure ก่อน —</option>';
+  sel.onchange = () => { const [t, ...id] = sel.value.split(':'); S.cloneBase = t ? {type:t, id:id.join(':')} : null; save(); };
 }
 async function openProc(){
   const sp = await getSpec();
@@ -1016,14 +1182,16 @@ async function openProc(){
     ${opt('localDev','webgpu',S.localDev,'GPU (WebGPU)', sp.gpu ? 'เร็วที่สุด · ' + est('local-webgpu', 1000) : 'เบราว์เซอร์นี้ไม่รองรับ', !sp.gpu)}
     ${opt('localDev','wasm',S.localDev,'CPU', 'ช้ากว่าแต่เสถียร ใช้ได้ทุกเครื่อง · ' + est('local-wasm', 1000))}
     <p class="hint">เสียง AI แบบ API (Pollinations): ${est('ai', 1000)}${qtag('pollinations')}</p>
+    <label class="switch" style="margin:14px 0 4px"><span>💼 โหมดเชิงพาณิชย์<br><small style="color:var(--mut)">อนุญาตเฉพาะตัวเลือกที่ใช้หารายได้ได้</small></span><input type="checkbox" id="pComm" ${S.commercial ? 'checked' : ''}></label>
     <h4>โคลนเสียง — ใช้</h4>
-    ${opt('cloneEngine','hf',S.cloneEngine,'API Hugging Face (ฟรี มีโควตา)' + qtag('hf'), est('clone-hf', 1000) + ' + รอคิว · ' + (Q.hit('hf') ? esc(quotaText('hf')) : 'ไม่ต้องติดตั้งอะไร'))}
-    ${opt('cloneEngine','server',S.cloneEngine,'คอมของฉัน (ใช้ GPU ของ Mac/PC)', S.serverUrl ? est('clone-server', 1000) + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน (ดูด้านล่าง)')}
+    ${opt('cloneEngine','openvoice',S.cloneEngine,'OpenVoice บนคอมของฉัน ' + licTag('clone-openvoice'), 'เสียงต้นทาง Google/Azure → แปลงเป็นเสียงของคุณ · ' + (S.serverUrl ? est('clone-openvoice', 1000) : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน'), !allowed('clone-openvoice'))}
+    ${opt('cloneEngine','hf',S.cloneEngine,'F5 · API Hugging Face ' + licTag('clone-hf') + qtag('hf'), est('clone-hf', 1000) + ' + รอคิว · ' + (Q.hit('hf') ? esc(quotaText('hf')) : 'ไม่ต้องติดตั้งอะไร'), !allowed('clone-hf'))}
+    ${opt('cloneEngine','server',S.cloneEngine,'F5 · คอมของฉัน ' + licTag('clone-server'), S.serverUrl ? est('clone-server', 1000) + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน (ดูด้านล่าง)', !allowed('clone-server'))}
     <p class="hint">โคลนเสียงรันในมือถือ/เบราว์เซอร์ไม่ได้ เพราะโมเดลใหญ่หลาย GB</p>
     <h4>สร้างภาพ — ใช้</h4>
-    ${opt('imgEngine','flux',S.imgEngine,'API FLUX (ไม่มีลายน้ำ)' + qtag('hf'), imgE('img-flux') + ' + รอคิว')}
-    ${opt('imgEngine','pol',S.imgEngine,'API Pollinations' + qtag(S.polKey ? 'pollinations' : 'polfree'), imgE('img-pol') + (S.polKey ? '' : ' · ไม่มีคีย์: รอ 15 วิ/ภาพ อาจมีลายน้ำ'))}
-    ${opt('imgEngine','server',S.imgEngine,'คอมของฉัน (SD-Turbo, ไม่มีลายน้ำ)', S.serverUrl ? imgE('img-server') + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน')}
+    ${opt('imgEngine','flux',S.imgEngine,'API FLUX (ไม่มีลายน้ำ) ' + licTag('img-flux') + qtag('hf'), imgE('img-flux') + ' + รอคิว', !allowed('img-flux'))}
+    ${opt('imgEngine','pol',S.imgEngine,'API Pollinations ' + licTag('img-pol') + qtag(S.polKey ? 'pollinations' : 'polfree'), imgE('img-pol') + (S.polKey ? '' : ' · ไม่มีคีย์: รอ 15 วิ/ภาพ อาจมีลายน้ำ'), !allowed('img-pol'))}
+    ${opt('imgEngine','server',S.imgEngine,'คอมของฉัน (Segmind-Vega, ไม่มีลายน้ำ) ' + licTag('img-server'), S.serverUrl ? imgE('img-server') + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน', !allowed('img-server'))}
     <h4>คอมของฉัน (Mac / PC)</h4>
     <div class="row2"><input class="inp" id="srvUrl" placeholder="https://xxxx.gradio.live" value="${esc(S.serverUrl)}" autocomplete="off"><button class="btn" id="srvTest">เชื่อม</button></div>
     <p class="hint" id="srvMsg">${SERVER_INFO && S.serverUrl ? `ล่าสุด: ${esc(SERVER_INFO.chip || '')} · ${esc(SERVER_INFO.device)} · RAM ${SERVER_INFO.ram_gb || '?'} GB` : ''}</p>
@@ -1056,6 +1224,7 @@ async function openProc(){
       catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
     };
     el.querySelector('#toKeys').onclick = () => openSettings();
+    el.querySelector('#pComm').onchange = e => { S.commercial = e.target.checked; enforceCommercial(); save(); renderEngines(); renderVoice(); openProc(); };
     el.querySelector('#macSave').onchange = e => { S.macSave = e.target.checked; save(); };
     el.querySelector('#macPick').onclick = async () => {
       if (!S.serverUrl) return toast('เชื่อมต่อคอมของฉันก่อน', true);
@@ -1096,6 +1265,8 @@ function openAbout(){
     <li class="m">△ โคลนเสียง: ช้า (รอคิว GPU ฟรี) โควตาจำกัด Space อาจปิด/เปลี่ยนได้ทุกเมื่อ คุณภาพภาษาไทยยังไม่สมบูรณ์ ข้อความยาวจะใช้เวลานานมาก</li>
     <li class="y">✓ สร้างภาพด้วย FLUX บน Hugging Face: ฟรี ไม่มีลายน้ำ (ใช้โควตา GPU ฟรี ถ้าหมดจะสลับไป Pollinations ให้เอง)</li>
     <li class="m">△ Pollinations โหมดฟรี: 1 ภาพ/~15 วินาที อาจมีลายน้ำ · คำสั่งภาษาไทยได้ผลน้อยกว่าอังกฤษ (FLUX ยิ่งต้องใช้อังกฤษ)</li>
+    <li class="y">✓ โหมดเชิงพาณิชย์ 💼: เสียง Google Cloud / Azure (ไทย ชาย-หญิง), โคลนด้วย OpenVoice (MIT), ภาพ FLUX (Apache 2.0) / Segmind-Vega (Apache 2.0)</li>
+    <li class="m">△ “ใช้หารายได้ได้” หมายถึงสัญญาอนุญาตของโมเดล/บริการอนุญาต — ยังต้องทำตามเงื่อนไขบริการ นโยบายแพลตฟอร์ม (YouTube/TikTok) และกฎหมาย ไม่ใช่คำปรึกษากฎหมาย</li>
     <li class="n">✗ โคลน “เสียงใครก็ได้” โดยไม่ได้รับอนุญาต — แอปให้ใช้เฉพาะเสียงตัวเองหรือที่เจ้าของยินยอม</li>
     <li class="n">✗ ระบบสมาชิก/จ่ายเงินจริง (ปุ่มโปร = ใส่คีย์ฟรี) · ซิงก์ข้ามเครื่อง (ข้อมูลอยู่ในเครื่องนี้)</li>
     <li class="n">✗ เล่นต่อตอนล็อกจอได้ไม่เสถียร โดยเฉพาะ iPhone</li></ul>
@@ -1291,6 +1462,7 @@ async function renderShot(div, prompt, seed){
         addHistory({kind:'image', prompt, blob});
         return;
       } catch(e){
+        if (S.commercial) throw new Error(e.message + ' — โหมดเชิงพาณิชย์จะไม่สลับไป Pollinations (ลองใหม่ หรือใช้คอมของฉัน)');
         toast(e.message + ' — ใช้ Pollinations แทน (อาจมีลายน้ำ)', true);
         msg('ใช้ตัวสำรอง Pollinations…');
       }
@@ -1306,6 +1478,7 @@ async function renderShot(div, prompt, seed){
 }
 $('#btnImg').onclick = async () => {
   const prompt = $('#imgPrompt').value.trim(); if (!prompt) return toast('พิมพ์คำอธิบายภาพก่อนนะ');
+  if (!allowed('img-' + S.imgEngine)) return toast('โหมดเชิงพาณิชย์: ' + lic('img-' + S.imgEngine).t + ' — เลือก FLUX หรือคอมของฉัน', true);
   if (imgBusy) return; imgBusy = true;
   const btn = $('#btnImg'); btn.classList.add('busy'); btn.disabled = true;
   const grid = $('#imgGrid'); grid.innerHTML = ''; grid.classList.toggle('one', S.imgCount === 1);
@@ -1337,7 +1510,9 @@ try {
     setTimeout(() => { toast('เชื่อมกับคอมของฉันแล้ว — โคลนเสียงและสร้างภาพจะใช้คอมเครื่องนั้น'); serverInfo().then(renderEst).catch(e => toast(e.message, true)); }, 600);
   }
 } catch(e){}
+enforceCommercial();
 onText(); renderVoice(); ui(); renderEngines(); renderQuota();
+if ((S.gKey && !gVoices) || (S.azKey && !azVoices)) loadCloudVoices();
 const h0 = location.hash.slice(1); if (PAGES[h0]) go(h0);
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ closeAll(); $('#editor').classList.remove('full'); } });

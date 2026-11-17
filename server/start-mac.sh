@@ -23,6 +23,8 @@ source .venv/bin/activate
 python -m pip install -q -U pip
 echo "ติดตั้งไลบรารี (ครั้งแรกใช้เวลาหลายนาที) ..."
 python -m pip install -q -r requirements.txt
+# OpenVoice V2 (MIT) without its old pinned dependencies
+python -m pip install -q --no-deps "git+https://github.com/myshell-ai/OpenVoice.git"
 
 export PYTORCH_ENABLE_MPS_FALLBACK=1
 python server.py "$@"

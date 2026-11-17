@@ -2,8 +2,9 @@
 AI Voice — Companion server (run on your Mac / PC, uses its GPU)
 
 Gives the AI Voice app two things with no quota and no watermark:
-  /clone_tts  : Thai voice cloning (F5-TTS-THAI, VYNCX/F5-TTS-THAI)
-  /txt2img    : text-to-image (SD-Turbo by default; set IMAGE_MODEL to change)
+  /convert_voice : voice cloning for commercial use (OpenVoice V2, MIT) on top of Google/Azure TTS audio
+  /clone_tts  : Thai voice cloning with F5-TTS-THAI (CC-BY-NC: personal use only)
+  /txt2img    : text-to-image (Segmind-Vega + VegaRT, Apache-2.0; set IMAGE_MODEL to change)
   /info       : reports the hardware, so the app can estimate times
 
 Start it with ./start-mac.sh (macOS) or:  python server.py
@@ -27,7 +28,10 @@ import gradio as gr
 import torch
 
 APP_URL = os.environ.get("APP_URL", "https://mengnattawitmarin.github.io/ai-voice/")
-IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "stabilityai/sd-turbo")
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "segmind/Segmind-Vega")  # Apache-2.0 (commercial OK)
+# licence of the image model (shown in the app): True = commercial OK, False = non-commercial, None = check yourself
+IMAGE_COMMERCIAL = {"segmind/segmind-vega": True, "segmind/ssd-1b": True, "stabilityai/sd-turbo": False,
+                    "stabilityai/sdxl-turbo": None}.get(IMAGE_MODEL.lower())
 PORT = int(os.environ.get("PORT", "7860"))
 SHARE = os.environ.get("SHARE", "1") != "0"
 
@@ -171,6 +175,52 @@ def clone_tts(ref_audio, ref_text, gen_text, speed=1.0):
     return out
 
 
+# ---------------- OpenVoice V2 tone-colour conversion (MIT, commercial OK) ----------------
+_ov = None
+_se_cache = {}
+
+
+def get_ov():
+    global _ov
+    if _ov is None:
+        import librosa.filters as _lf
+        _mel = _lf.mel
+        if not getattr(_lf, "_ov_patched", False):  # OpenVoice calls librosa.filters.mel positionally (old librosa API)
+            _lf.mel = lambda *a, **k: _mel(**dict(zip(["sr", "n_fft", "n_mels", "fmin", "fmax"], a)), **k)
+            _lf._ov_patched = True
+        from huggingface_hub import hf_hub_download
+        from openvoice.api import ToneColorConverter
+        cfg = hf_hub_download("myshell-ai/OpenVoiceV2", "converter/config.json")
+        ckpt = hf_hub_download("myshell-ai/OpenVoiceV2", "converter/checkpoint.pth")
+        _ov = ToneColorConverter(cfg, device="cuda:0" if DEVICE == "cuda" else "cpu", enable_watermark=False)
+        _ov.load_ckpt(ckpt)
+    return _ov
+
+
+def _se(path):
+    import hashlib
+    h = hashlib.sha1(open(path, "rb").read()).hexdigest()
+    if h not in _se_cache:
+        _se_cache[h] = get_ov().extract_se([path])
+    return _se_cache[h]
+
+
+def convert_voice(source_audio, ref_audio, tau=0.3):
+    """Re-voice `source_audio` (e.g. Google/Azure TTS) with the tone colour of `ref_audio` (your own voice)."""
+    if not source_audio or not ref_audio:
+        raise gr.Error("missing audio")
+    import soundfile as sf
+    import librosa
+    t0 = time.time()
+    wav, sr = librosa.load(source_audio, sr=22050)  # decode mp3 → wav for OpenVoice
+    src = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+    sf.write(src, wav, sr)
+    out = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
+    get_ov().convert(audio_src_path=src, src_se=_se(src), tgt_se=_se(ref_audio), output_path=out, tau=float(tau or 0.3))
+    STATS["ov_ms"] = round((time.time() - t0) * 1000)
+    return out
+
+
 # ---------------- text to image ----------------
 _pipe = None
 
@@ -180,11 +230,25 @@ def get_pipe():
     if _pipe is None:
         from diffusers import AutoPipelineForText2Image
         half = DEVICE in ("cuda", "mps")
-        kw = {"torch_dtype": torch.float16 if half else torch.float32}
-        try:
-            _pipe = AutoPipelineForText2Image.from_pretrained(IMAGE_MODEL, variant="fp16" if half else None, **kw)
-        except Exception:
-            _pipe = AutoPipelineForText2Image.from_pretrained(IMAGE_MODEL, **kw)
+        dtype = torch.float16 if half else torch.float32
+        kw = {"torch_dtype": dtype}
+        if "vega" in IMAGE_MODEL.lower():
+            # Segmind-Vega (Apache-2.0) + VegaRT LCM-LoRA (Apache-2.0) for 4-step generation
+            from diffusers import StableDiffusionXLPipeline, LCMScheduler, AutoencoderKL
+            vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype)  # MIT, avoids black images in fp16
+            try:
+                _pipe = StableDiffusionXLPipeline.from_pretrained(IMAGE_MODEL, vae=vae, variant="fp16" if half else None, **kw)
+            except Exception:
+                _pipe = StableDiffusionXLPipeline.from_pretrained(IMAGE_MODEL, vae=vae, **kw)
+            _pipe.load_lora_weights("segmind/Segmind-VegaRT")
+            _pipe.fuse_lora()
+            _pipe.scheduler = LCMScheduler.from_config(_pipe.scheduler.config)
+            _pipe.lcm = True
+        else:
+            try:
+                _pipe = AutoPipelineForText2Image.from_pretrained(IMAGE_MODEL, variant="fp16" if half else None, **kw)
+            except Exception:
+                _pipe = AutoPipelineForText2Image.from_pretrained(IMAGE_MODEL, **kw)
         _pipe = _pipe.to(DEVICE)
         _pipe.set_progress_bar_config(disable=True)
         if DEVICE == "mps":
@@ -195,16 +259,19 @@ def get_pipe():
 def txt2img(prompt, seed=0, width=512, height=512, steps=2):
     if not (prompt or "").strip():
         raise gr.Error("missing prompt")
-    base = 1024 if "xl" in IMAGE_MODEL.lower() else 512
+    big = any(x in IMAGE_MODEL.lower() for x in ("xl", "vega", "ssd"))
+    base = (1024 if (ram_gb() or 8) >= 16 else 768) if big else 512
     w, h = float(width or base), float(height or base)
     scale = (base * base / (w * h)) ** 0.5  # keep ~native pixel count (fast + sharp)
     w = max(256, int(w * scale) // 64 * 64)
     h = max(256, int(h * scale) // 64 * 64)
-    steps = max(1, min(4, int(steps or 2)))
+    pipe = get_pipe()
+    lcm = getattr(pipe, "lcm", False)
+    steps = 4 if lcm else max(1, min(4, int(steps or 2)))
     seed = int(seed) if seed not in (None, "") else random.randint(0, 2**31 - 1)
     t0 = time.time()
     g = torch.Generator("cpu").manual_seed(seed % (2**31 - 1))
-    img = get_pipe()(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0, width=w, height=h, generator=g).images[0]
+    img = pipe(prompt=prompt, num_inference_steps=steps, guidance_scale=0.0, width=w, height=h, generator=g).images[0]
     STATS["img_ms"] = round((time.time() - t0) * 1000)
     return img
 
@@ -217,6 +284,8 @@ def info():
         "os": platform.platform(),
         "image_model": IMAGE_MODEL,
         "save_dir": SAVE_DIR,
+        "image_commercial": IMAGE_COMMERCIAL,
+        "openvoice_loaded": _ov is not None,
         "tts_loaded": _tts is not None,
         "img_loaded": _pipe is not None,
         **STATS,
@@ -232,6 +301,12 @@ with gr.Blocks(title="AI Voice Server") as demo:
         sp = gr.Slider(0.5, 2.0, value=1.0, step=0.05, label="speed")
         o = gr.Audio(label="output")
         gr.Button("Generate").click(clone_tts, [a, rt, gt, sp], o, api_name="clone_tts")
+    with gr.Tab("OpenVoice"):
+        sa = gr.Audio(type="filepath", label="source_audio")
+        ra = gr.Audio(type="filepath", label="ref_audio")
+        ta_ = gr.Slider(0.1, 1.0, value=0.3, label="tau")
+        oo = gr.Audio(label="output")
+        gr.Button("Convert").click(convert_voice, [sa, ra, ta_], oo, api_name="convert_voice")
     with gr.Tab("Text to image"):
         p = gr.Textbox(label="prompt")
         s = gr.Number(value=0, label="seed", precision=0)
@@ -271,7 +346,7 @@ def print_link(url):
 
 
 if __name__ == "__main__":
-    print(f"Device: {DEVICE} · {chip_name()} · RAM {ram_gb()} GB · image model {IMAGE_MODEL}")
+    print(f"Device: {DEVICE} · {chip_name()} · RAM {ram_gb()} GB · image model {IMAGE_MODEL} (commercial: {IMAGE_COMMERCIAL})")
     print(f"โฟลเดอร์เก็บงาน: {SAVE_DIR}   (เปลี่ยน: ./start-mac.sh --choose-folder หรือกดจากแอป)")
     demo.queue(default_concurrency_limit=1)
     _, local_url, share_url = demo.launch(server_name="0.0.0.0", server_port=PORT, share=SHARE, prevent_thread_lock=True, show_error=True)
