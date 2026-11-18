@@ -106,7 +106,7 @@ Path(SAVE_DIR).mkdir(parents=True, exist_ok=True)
 cfg["save_dir"] = SAVE_DIR
 save_cfg(cfg)
 
-ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".m4a", ".ogg"}
+ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".webp", ".wav", ".mp3", ".m4a", ".ogg", ".mp4", ".webm", ".srt"}
 
 
 def safe_name(name, ext):
@@ -123,13 +123,28 @@ def save_file(file, kind="images", name=""):
         raise gr.Error("file type not allowed")
     if os.path.getsize(file) > 300 * 2**20:
         raise gr.Error("file too large")
-    sub = "audio" if kind == "audio" else "images"
+    sub = kind if kind in ("audio", "videos", "images") else "images"
     day = Path(SAVE_DIR) / sub / datetime.now().strftime("%Y-%m-%d")
     day.mkdir(parents=True, exist_ok=True)
     dest = day / safe_name(name, ext)
     shutil.copyfile(file, dest)
     print(f"บันทึก: {dest}")
     return str(dest)
+
+
+def transcode(file):
+    """Convert any video (WebM/VP9/Opus) to platform-friendly MP4: H.264 + AAC, faststart."""
+    if not file:
+        raise gr.Error("no file")
+    if not shutil.which("ffmpeg"):
+        raise gr.Error("ffmpeg not installed: brew install ffmpeg")
+    out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False).name
+    cmd = ["ffmpeg", "-y", "-i", file, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise gr.Error("ffmpeg failed: " + r.stderr[-400:])
+    return out
 
 
 def choose_folder():
@@ -323,6 +338,10 @@ with gr.Blocks(title="AI Voice Server") as demo:
         gr.Button("Save").click(save_file, [f, k, n], saved, api_name="save_file")
         folder = gr.Textbox(label="folder")
         gr.Button("Choose folder on this Mac").click(choose_folder, None, folder, api_name="choose_folder")
+    with gr.Tab("Transcode"):
+        tv = gr.File(type="filepath", label="video")
+        to = gr.File(label="mp4")
+        gr.Button("To MP4 (H.264/AAC)").click(transcode, tv, to, api_name="transcode")
     with gr.Tab("Info"):
         out = gr.Textbox(label="info")
         gr.Button("Refresh").click(info, None, out, api_name="info")

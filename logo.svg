@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1446"/>
+      <stop offset="1" stop-color="#1c0b3f"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset=".5" stop-color="#7c5cff"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#7c5cff" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#7c5cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <circle cx="256" cy="262" r="200" fill="url(#glow)"/>
+  <!-- G ring -->
+  <path d="M 383 171 A 152 152 0 1 0 408 262" fill="none" stroke="url(#ring)" stroke-width="58" stroke-linecap="round"/>
+  <!-- G crossbar as equalizer bars -->
+  <rect x="300" y="236" width="108" height="52" rx="26" fill="url(#ring)"/>
+  <!-- play -->
+  <path d="M 210 196 L 210 328 L 300 262 Z" fill="#ffffff" stroke="#ffffff" stroke-width="18" stroke-linejoin="round"/>
+  <!-- AI spark -->
+  <path d="M 404 92 C 410 120 418 128 446 134 C 418 140 410 148 404 176 C 398 148 390 140 362 134 C 390 128 398 120 404 92 Z" fill="#ffffff"/>
+</svg>

@@ -1,7 +1,7 @@
 {
-  "name": "AI Voice — Text to Speech",
-  "short_name": "AI Voice",
-  "description": "แปลงข้อความเป็นเสียงพูด โคลนเสียง และสร้างภาพจากข้อความ",
+  "name": "Gen Medi — AI Media Studio",
+  "short_name": "Gen Medi",
+  "description": "สตูดิโอสร้างสื่อด้วย AI: เสียงพากย์ โคลนเสียง สร้างภาพ ตัดต่อวิดีโอ ส่งออกทุกแพลตฟอร์ม",
   "lang": "th",
   "start_url": "./",
   "scope": "./",
@@ -15,6 +15,7 @@
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
+    { "name": "ตัดต่อวิดีโอ", "url": "./#studio" },
     { "name": "โคลนเสียง", "url": "./#clone" },
     { "name": "สร้างภาพ", "url": "./#image" }
   ]

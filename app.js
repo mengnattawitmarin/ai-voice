@@ -1,4 +1,4 @@
-/* AI Voice Studio — Text to Speech · Voice Clone · Text to Image
+/* Gen Medi — AI media studio: Text to Speech · Voice Clone · Text to Image · Video Studio
    Runs fully in the browser. Free services used:
    - Device voices: Web Speech API (offline, free)
    - AI voices + images: Pollinations (gen.pollinations.ai / image.pollinations.ai)
@@ -17,8 +17,8 @@ const LS = {
 const db = (() => {
   let p;
   const open = () => p ||= new Promise((res, rej) => {
-    const r = indexedDB.open('ai-voice', 1);
-    r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('clones', {keyPath:'id'}); d.createObjectStore('history', {keyPath:'id'}); };
+    const r = indexedDB.open('ai-voice', 2);
+    r.onupgradeneeded = () => { const d = r.result; for (const n of ['clones', 'history', 'projects']) if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, {keyPath:'id'}); };
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   });
   const run = async (store, mode, fn) => { const d = await open(); return new Promise((res, rej) => {
@@ -29,6 +29,7 @@ const db = (() => {
     put: (s, v) => run(s, 'readwrite', st => st.put(v)),
     del: (s, k) => run(s, 'readwrite', st => st.delete(k)),
     clear: s => run(s, 'readwrite', st => st.clear()),
+    get: (s, k) => run(s, 'readonly', st => st.get(k)),
   };
 })();
 
@@ -140,6 +141,8 @@ const wave = (() => {
 
 /* ---------------- pages & drawer ---------------- */
 const PAGES = {
+  home:['GEN MEDI','สตูดิโอสร้างสื่อด้วย AI · เสียง ภาพ วิดีโอ'],
+  studio:['Video Studio','ตัดต่อ ภาพ + เสียงพากย์ + ซับ → พร้อมลงทุกแพลตฟอร์ม'],
   tts:['Text to Speech','เปลี่ยนข้อความเป็นเสียงพูดคุณภาพสูง'],
   clone:['Voice Clone','สร้างเสียงพูดจากเสียงตัวอย่าง'],
   image:['Text to Image','เปลี่ยนคำบรรยายเป็นภาพด้วย AI ฟรี'],
@@ -147,14 +150,36 @@ const PAGES = {
 function go(p){
   $$('.page').forEach(s => s.classList.toggle('on', s.dataset.page === p));
   $$('.nav[data-go]').forEach(n => n.classList.toggle('on', n.dataset.go === p));
-  $('#pageTitle').textContent = PAGES[p][0]; $('#pageSub').textContent = PAGES[p][1];
-  $('#dock').hidden = p !== 'tts'; $('#app').classList.toggle('no-dock', p !== 'tts');
+  $('#pageTitleTxt').textContent = PAGES[p][0]; $('#pageSub').textContent = PAGES[p][1]; $('#hdrLogo').hidden = p !== 'home';
+  $('#dock').hidden = p !== 'tts'; $('#tabbar').hidden = p === 'tts';
+  $('#app').classList.toggle('no-dock', p !== 'tts'); $('#app').classList.toggle('tabbed', p !== 'tts');
+  $$('#tabbar [data-tab2]').forEach(b => b.classList.toggle('on', b.dataset.tab2 === p));
+  if (p === 'home') renderHomeProjects();
+  window.dispatchEvent(new CustomEvent('gm:page', {detail: p}));
   if (p === 'clone') renderClones();
   setTimeout(() => { renderQuota(); renderEst(); });
   closeAll(); scrollTo(0,0);
-  if (location.hash.slice(1) !== p) history.replaceState(null, '', p === 'tts' ? location.pathname : '#' + p);
+  if (location.hash.slice(1) !== p) history.replaceState(null, '', p === 'home' ? location.pathname : '#' + p);
 }
 $('#btnMenu').onclick = () => { drawer.classList.add('on'); scrim.classList.add('on'); };
+$$('#tabbar [data-tab2]').forEach(b => b.onclick = () => go(b.dataset.tab2));
+$('#pageTitle').onclick = () => go('home');
+function homeAction(k){
+  if (PAGES[k]) return go(k);
+  if (k === 'export'){ go('studio'); setTimeout(() => window.GMStudio?.openExport(), 50); return; }
+  if (k === 'sfx') return window.GMStudio?.openSfxMaker();
+  if (k === 'music'){ go('studio'); setTimeout(() => window.GMStudio?.openMusic(), 50); return; }
+  ({history:openHistory, proc:openProc, about:openAbout})[k]?.();
+}
+$$('[data-home]').forEach(b => b.onclick = () => homeAction(b.dataset.home));
+$('#homeAuto').onclick = () => { go('studio'); setTimeout(() => window.GMStudio?.openAuto(), 50); };
+$('#homeNewProj').onclick = () => { go('studio'); setTimeout(() => window.GMStudio?.newProject(), 50); };
+async function renderHomeProjects(){
+  const list = (await db.all('projects')).sort((a, b) => b.updated - a.updated).slice(0, 6), box = $('#homeProjList');
+  if (!list.length) return;
+  box.innerHTML = list.map(p => `<button class="proj" data-id="${p.id}">${p.thumb ? `<img src="${URL.createObjectURL(p.thumb)}" alt="">` : '<span class="ph"></span>'}<span class="t"><b>${esc(p.name || 'ไม่มีชื่อ')}</b><small>${(p.scenes || []).length} ฉาก · ${new Date(p.updated).toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'})}</small></span></button>`).join('');
+  box.querySelectorAll('.proj').forEach(b => b.onclick = () => { go('studio'); setTimeout(() => window.GMStudio?.openProject(b.dataset.id), 50); });
+}
 $$('.nav[data-go]').forEach(n => n.onclick = () => go(n.dataset.go));
 $$('.nav[data-act]').forEach(n => n.onclick = () => ({history:openHistory, settings:openSettings, install:openInstall, about:openAbout, proc:openProc})[n.dataset.act]());
 $('#btnAvatar').onclick = () => openSettings();
@@ -529,7 +554,7 @@ function start(){
   prepare(v, text); P.idx = 0; P.kind = v.type === 'device' ? 'device' : 'remote';
   buildReader(); P.state = 'playing'; ui();
   addHistory({kind:'tts', text: text.slice(0, 4000), voice: v.name});
-  if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({title: text.slice(0, 60), artist: v.name, album: 'AI Voice'});
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({title: text.slice(0, 60), artist: v.name, album: 'Gen Medi'});
   P.kind === 'device' ? speakDevice() : playRemote();
 }
 function pause(){
@@ -1025,7 +1050,7 @@ async function buildFile(quiet){
   status('กำลังรวมไฟล์…');
   const blob = await mergeAudio(P.blobs.slice(0, n));
   const ext = blob.type === 'audio/wav' ? 'wav' : 'mp3';
-  P.lastFile = new File([blob], `ai-voice-${stamp()}.${ext}`, {type: blob.type});
+  P.lastFile = new File([blob], `genmedi-voice-${stamp()}.${ext}`, {type: blob.type});
   status(`ไฟล์เสียงพร้อมแล้ว (${(blob.size/1048576).toFixed(1)} MB)`); if (P.state === 'idle') $('#prog').style.width = '0';
   addHistory({kind:'audio', text: text.slice(0, 4000), voice: v.name, blob: P.lastFile});
   return P.lastFile;
@@ -1037,9 +1062,9 @@ $('#dkShare').onclick = async () => {
     if (curVoice().type !== 'device'){
       const f = await buildFile(); if (!f) return;
       saveToMac(f, 'audio', text.slice(0, 40));
-      return await shareFiles([f], 'เสียงจาก AI Voice');
+      return await shareFiles([f], 'เสียงจาก Gen Medi');
     }
-    if (navigator.share) return await navigator.share({title:'AI Voice', text: text ? text.slice(0, 2000) : 'แอปแปลงข้อความเป็นเสียง', url: location.href.split('#')[0]});
+    if (navigator.share) return await navigator.share({title:'Gen Medi', text: text ? text.slice(0, 2000) : 'Gen Medi — สตูดิโอสร้างสื่อด้วย AI', url: location.href.split('#')[0]});
     await navigator.clipboard.writeText(location.href.split('#')[0]); toast('คัดลอกลิงก์แอปแล้ว');
   } catch(e){ if (e.name !== 'AbortError') toast('แชร์ไม่สำเร็จ', true); }
 };
@@ -1101,8 +1126,8 @@ async function openHistory(){
         if (it.kind === 'image'){ $('#imgPrompt').value = it.prompt; go('image'); }
         else { go('tts'); putText(it.text, ''); }
       };
-      row.querySelector('[data-dl]')?.addEventListener('click', () => { const f = asFile(it.blob, it.kind === 'image' ? 'ai-image' : 'ai-voice'); saveBlob(f, f.name); });
-      row.querySelector('[data-sh]')?.addEventListener('click', () => shareFiles([asFile(it.blob, it.kind === 'image' ? 'ai-image' : 'ai-voice')], (it.text || it.prompt || '').slice(0, 80)));
+      row.querySelector('[data-dl]')?.addEventListener('click', () => { const f = asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : 'genmedi-voice'); saveBlob(f, f.name); });
+      row.querySelector('[data-sh]')?.addEventListener('click', () => shareFiles([asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : 'genmedi-voice')], (it.text || it.prompt || '').slice(0, 80)));
       row.querySelector('[data-del]').onclick = async () => { await db.del('history', it.id); row.remove(); };
     });
     el.querySelector('#hClear')?.addEventListener('click', async () => { await db.clear('history'); openHistory(); });
@@ -1372,7 +1397,7 @@ function loadImg(url, ms = 120000){
 async function shotFile(div, url){
   if (div._file) return div._file;
   const b = await (await fetch(url)).blob();
-  return div._file = asFile(b, 'ai-image');
+  return div._file = asFile(b, 'genmedi-image');
 }
 function shotActions(div, url, prompt){
   div.querySelector('[data-dl]').onclick = async () => {
@@ -1505,7 +1530,7 @@ $('#btnImg').onclick = async () => {
 try {
   const qs = new URLSearchParams(location.search), sv = qs.get('server');
   if (sv && isUrl(sv)){
-    S.serverUrl = sv.replace(/\/+$/, ''); if (S.cloneEngine !== 'server') S.cloneEngine = 'server'; S.imgEngine = 'server'; save();
+    S.serverUrl = sv.replace(/\/+$/, ''); S.cloneEngine = S.commercial ? 'openvoice' : 'server'; S.imgEngine = 'server'; save();
     history.replaceState(null, '', location.pathname + location.hash);
     setTimeout(() => { toast('เชื่อมกับคอมของฉันแล้ว — โคลนเสียงและสร้างภาพจะใช้คอมเครื่องนั้น'); serverInfo().then(renderEst).catch(e => toast(e.message, true)); }, 600);
   }
@@ -1513,7 +1538,34 @@ try {
 enforceCommercial();
 onText(); renderVoice(); ui(); renderEngines(); renderQuota();
 if ((S.gKey && !gVoices) || (S.azKey && !azVoices)) loadCloudVoices();
-const h0 = location.hash.slice(1); if (PAGES[h0]) go(h0);
+/* image generation helper for the studio: returns {blob, lk} using the current engine, honouring commercial mode */
+async function genImage(prompt, ratio){
+  const keep = S.imgRatio; if (ratio) S.imgRatio = ratio;
+  const seed = Math.floor(Math.random() * 1e9);
+  try {
+    const eng = S.imgEngine;
+    if (eng === 'flux' || eng === 'server'){
+      try {
+        if (eng === 'flux' && Q.hit('hf')) throw new Error(quotaText('hf'));
+        const blob = await gradioImage(eng === 'server' ? S.serverUrl : FLUX_SPACE, prompt, seed);
+        addHistory({kind:'image', prompt, blob});
+        return {blob, lk: 'img-' + eng};
+      } catch(e){ if (S.commercial) throw e; }
+    }
+    if (S.commercial) throw new Error('โหมดเชิงพาณิชย์: ' + lic('img-' + eng).t);
+    const r = await polImage(prompt, seed, () => {});
+    const blob = r.blob || await (await fetch(r.url)).blob();
+    addHistory({kind:'image', prompt, blob});
+    return {blob, lk: 'img-pol'};
+  } finally { S.imgRatio = keep; }
+}
+/* public API used by studio.js */
+window.GM = { S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
+  curVoice, synthesize, makeChunks, mergeAudio, decode, encodeWav, genImage, allowed, lic, licTag, voiceLicKey, go, status, effRate,
+  RATIOS, IMG_STYLES, openSettings, openProc, renderEst, gconnect, isUrl, getSpec, fmtDur, SPEED, gradio: () => gradio,
+  get serverInfo(){ return SERVER_INFO; }, ta };
+window.dispatchEvent(new Event('gm:ready'));
+const h0 = location.hash.slice(1); go(PAGES[h0] ? h0 : 'home');
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ closeAll(); $('#editor').classList.remove('full'); } });
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
