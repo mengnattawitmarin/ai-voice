@@ -1,0 +1,23 @@
+{
+  "name": "ai-voice-editor",
+  "private": true,
+  "type": "module",
+  "description": "Source of the AI Voice video editor. Built output lives in ../editor (committed, no build step needed to deploy).",
+  "scripts": {
+    "build:js": "esbuild src/main.tsx --bundle --minify --format=esm --jsx=automatic --loader:.css=empty --target=es2020,chrome100,safari15 --outfile=../editor/app.js",
+    "build:css": "tailwindcss -i src/styles.css -o ../editor/app.css --minify",
+    "build": "npm run build:js && npm run build:css"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tailwind-merge": "^3.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.4",
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.4",
+    "typescript": "^5.8.3"
+  }
+}
