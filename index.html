@@ -82,6 +82,7 @@
       <button class="cat" data-home="studio"><span class="ci" style="--c1:#10b981;--c2:#3b82f6">🎬</span><b>สตูดิโอวิดีโอ</b><small>ภาพ + เสียงพากย์ + ซับ</small></button>
       <a class="cat" href="editor/" style="text-decoration:none;color:inherit"><span class="ci" style="--c1:#0ea5e9;--c2:#22c55e">✂️</span><b>ตัดต่อคลิป Pro</b><small>ตัด แบ่ง ฟิลเตอร์ สติกเกอร์</small></a>
       <button class="cat" data-home="export"><span class="ci" style="--c1:#ec4899;--c2:#f97316">🚀</span><b>ส่งออกแพลตฟอร์ม</b><small>TikTok · YouTube · IG</small></button>
+      <button class="cat" data-home="vfx"><span class="ci" style="--c1:#f43f5e;--c2:#8b5cf6">🎭</span><b>เปลี่ยนเสียง</b><small>ชาย/หญิง/เด็ก · หุ่นยนต์ · โทรโข่ง</small></button>
       <button class="cat" data-home="sfx"><span class="ci" style="--c1:#06b6d4;--c2:#a3e635">🔔</span><b>เสียงประกอบ SFX</b><small>ข้อความ → เสียง</small></button>
       <button class="cat" data-home="music"><span class="ci" style="--c1:#8b5cf6;--c2:#f43f5e">🎼</span><b>เพลงประกอบ</b><small>แต่งใหม่ ไม่ติดลิขสิทธิ์</small></button>
       <button class="cat" data-home="history"><span class="ci" style="--c1:#64748b;--c2:#6366f1">🗂️</span><b>คลังงาน</b><small>ประวัติ & ไฟล์</small></button>
@@ -167,7 +168,7 @@
 
     <div class="card feats">
       <button class="feat" id="fLang"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-globe"/></svg><div><b>ภาษา</b><small id="fLangV">ไทย</small></div></button>
-      <button class="feat" id="fTone"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-music"/></svg><div><b>โทนเสียง</b><small id="fToneV">ปกติ</small></div></button>
+      <button class="feat" id="fTone"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-music"/></svg><div><b>เปลี่ยนเสียง</b><small id="fToneV">ปกติ</small></div></button>
       <button class="feat" id="fStyle"><svg class="i" style="stroke:#e879f9"><use href="#i-star"/></svg><div><b>รูปแบบเสียง</b><small id="fStyleV">ธรรมชาติ</small></div></button>
       <button class="feat" id="fAdv"><svg class="i" style="stroke:url(#gfeat)"><use href="#i-sliders"/></svg><div><b>ขั้นสูง</b><small>ปรับแต่งเพิ่มเติม</small></div></button>
     </div>
@@ -278,6 +279,7 @@
 <div class="toast" id="toast"></div>
 
 <script type="module" src="app.js"></script>
+<script src="voicefx.js"></script>
 <script src="sfx.js"></script>
 <script type="module" src="studio.js"></script>
 </body>

@@ -255,3 +255,13 @@ select.mini{padding:0 6px}
 .plat .pi{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;font-size:20px;flex:none;background:rgba(255,255,255,.08)}
 .plat .t{flex:1;min-width:0}.plat b{display:block;font-size:15px}.plat small{color:var(--mut);font-size:12.5px}
 .step-list li{margin:4px 0;font-size:14px}.step-list .done{color:var(--ok)}.step-list .run{color:#c7d2fe}.step-list .err{color:var(--err)}
+/* voice changer */
+.fxgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.fxp{display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 4px;border-radius:14px;border:1px solid var(--line2);background:rgba(6,10,32,.5);color:#dfe3ff;min-height:76px}
+.fxp span{font-size:24px;line-height:1}
+.fxp small{font-size:12px;line-height:1.3;text-align:center;color:#cfd4ff}
+.fxp.on{background:var(--grad2);border-color:transparent}
+.fxp.on small{color:#fff}
+.fxr{margin:10px 2px 4px}
+.fxl{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--mut);margin-bottom:4px}
+.fxl b{color:#fff;font-weight:600}

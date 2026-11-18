@@ -40,6 +40,7 @@ const S = Object.assign({
   cloneEngine:'hf', localDev:'auto', serverUrl:'', macSave:true, commercial:true, gKey:'', azKey:'', azRegion:'southeastasia', allowOverFree:false, cloneBase:null, imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
+if (!S.fx){ S.fx = {gender:'orig', age:'orig', srcG:'auto', effect:'none', pitch:0, formant:0, rev:0, echo:0}; if (S.tone && S.tone !== 1) S.fx.pitch = Math.round(12 * Math.log2(S.tone)); }
 
 const LANGS = [
   ['th','ไทย','th-TH','สวัสดีค่ะ นี่คือตัวอย่างเสียงที่จะอ่านข้อความของคุณ'],
@@ -168,6 +169,7 @@ function homeAction(k){
   if (PAGES[k]) return go(k);
   if (k === 'export'){ go('studio'); setTimeout(() => window.GMStudio?.openExport(), 50); return; }
   if (k === 'sfx') return window.GMStudio?.openSfxMaker();
+  if (k === 'vfx'){ go('tts'); setTimeout(() => openVoiceFx(), 50); return; }
   if (k === 'music'){ go('studio'); setTimeout(() => window.GMStudio?.openMusic(), 50); return; }
   ({history:openHistory, proc:openProc, about:openAbout})[k]?.();
 }
@@ -410,7 +412,7 @@ function prettyDev(d){ return d.name.replace(/\s*\((?:Thai|Thailand)[^)]*\)/i,''
 function renderVoice(){
   const v = curVoice(); $('#vName').textContent = v.name; $('#vDesc').textContent = v.desc;
   $('#fLangV').textContent = lang()[1];
-  $('#fToneV').textContent = (TONES.find(t => t[1] === S.tone) || TONES[2])[0];
+  $('#fToneV').textContent = window.VFX ? VFX.label(S.fx) : 'ปกติ';
   $('#fStyleV').textContent = (STYLES[S.style]||STYLES.natural).n;
   $('#dkSave').style.opacity = v.type === 'device' ? .55 : 1;
   try { renderEst(); renderQuota(); } catch(e){}
@@ -432,6 +434,12 @@ $('#btnVoice').onclick = () => {
     h += `<h4>เสียง AI ฟรีในเครื่อง ไม่ต้องใช้คีย์ ${licTag('local')}</h4>`;
     h += locs.map(l => row('local:'+l[0], esc(l[1]) + ` <span class="tag">${l[3]}</span>`, 'ฟรี ออฟไลน์หลังโหลดครั้งแรก (~115MB) · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
   }
+  if (S.lang === 'th' && window.VFX){
+    const fx = VFX.norm(S.fx);
+    h += `<h4>🎭 เสียงแปลงด้วย AI — สร้างจากเสียงในเครื่อง ${licTag('local')}</h4>`;
+    h += DERIV.map((d, i) => row('dv:' + i, d[3], d[4], v.type === 'local' && v.id === d[0] && fx.gender === d[1] && fx.age === d[2])).join('');
+    h += `<button class="opt" data-vfx><span class="dot"></span><span class="t"><b>🎛️ เปลี่ยนเพศ / วัย / เอฟเฟกต์ ของเสียงไหนก็ได้ →</b><small>หุ่นยนต์ โทรโข่ง ประกาศ ชิปมังก์ ผี ฯลฯ — ใช้ได้กับ Google/Azure (💼) และเสียงโคลนด้วย</small></span></button>`;
+  }
   h += `<h4>เสียง AI Pollinations ${licTag('ai')} ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
   h += AI_VOICES.map(a => row('ai:'+a[0], esc(a[1]) + ` <span class="tag">${a[0]}</span>`, esc(a[2]) + ' · ดาวน์โหลด MP3 ได้', v.type==='ai' && v.id===a[0])).join('');
   if (!keyOk) h += `<p class="hint">เสียง AI ใช้ Pollinations — <a href="#" data-set>ใส่คีย์ฟรีในตั้งค่า</a> (สมัครฟรี) อ่านภาษาไทยได้แต่สำเนียงอาจยังไม่เป๊ะ</p>`;
@@ -443,10 +451,16 @@ $('#btnVoice').onclick = () => {
     : `<p class="hint">ไม่มีเสียง${esc(lang()[1])}ในเครื่องนี้ — iPhone: ตั้งค่า › การช่วยการเข้าถึง › เนื้อหาที่พูด › เสียง / Android: ตั้งค่า › การแปลงข้อความเป็นเสียง</p>`;
   openSheet(h, el => {
     el.querySelectorAll('.opt[data-k]').forEach(b => b.onclick = () => {
+      if (b.dataset.k.startsWith('dv:')){
+        const d = DERIV[+b.dataset.k.slice(3)];
+        S.voice = {type:'local', id:d[0]}; S.fx = Object.assign(VFX.norm(S.fx), {gender:d[1], age:d[2], srcG:'auto'});
+        save(); stopAll(); renderVoice(); closeAll(); toast('ใช้ ' + d[3].replace(/^\S+\s/, '') + ' แล้ว — ปรับต่อได้ที่ “เปลี่ยนเสียง”'); return;
+      }
       const [type, ...rest] = b.dataset.k.split(':'); S.voice = {type, id: rest.join(':')}; save(); stopAll(); renderVoice(); closeAll();
       if (type === 'ai' && !S.polKey) toast('อย่าลืมใส่คีย์ Pollinations ในตั้งค่า ถ้าเล่นไม่ได้');
     });
     el.querySelector('[data-gclone]').onclick = () => go('clone');
+    el.querySelector('[data-vfx]')?.addEventListener('click', () => openVoiceFx());
     el.querySelector('#vComm').onchange = e => { S.commercial = e.target.checked; enforceCommercial(); save(); renderVoice(); renderEngines(); toast(S.commercial ? 'เปิดโหมดเชิงพาณิชย์แล้ว' : 'ปิดโหมดเชิงพาณิชย์แล้ว'); };
     el.querySelectorAll('[data-setc]').forEach(b => b.onclick = () => openSettings());
     el.querySelector('[data-set]')?.addEventListener('click', e => { e.preventDefault(); openSettings(true); });
@@ -456,7 +470,7 @@ $('#btnPreview').onclick = async () => {
   stopAll(); const v = curVoice(), sample = lang()[3];
   if (v.type === 'device'){
     if (!v.obj) return toast('ไม่มีเสียงในเครื่องสำหรับภาษานี้', true);
-    const u = new SpeechSynthesisUtterance(sample); u.voice = v.obj; u.lang = v.obj.lang; u.rate = effRate(); u.pitch = S.tone; u.volume = Math.min(1, S.vol);
+    const u = new SpeechSynthesisUtterance(sample); u.voice = v.obj; u.lang = v.obj.lang; u.rate = effRate(); u.pitch = devPitchNow(v); u.volume = Math.min(1, S.vol);
     synth.cancel(); synth.speak(u); return;
   }
   const b = $('#btnPreview'); b.disabled = true; toast('กำลังสร้างตัวอย่างเสียง…');
@@ -476,11 +490,138 @@ rate.onchange = vol.onchange = () => { save(); if (P.state === 'playing' && P.ki
 
 $('#fLang').onclick = () => optionSheet('ภาษา', LANGS.map(l => ({v:l[0], n:l[1], d:`${devVoices.filter(v=>v.lang.toLowerCase().startsWith(l[0])).length} เสียงในเครื่อง`})), S.lang,
   v => { S.lang = v; if (S.voice?.type === 'device') S.voice = null; save(); stopAll(); renderVoice(); });
-$('#fTone').onclick = () => optionSheet('โทนเสียง', TONES.map(t => ({v:t[1], n:t[0], d:'ใช้กับเสียงในเครื่อง (เสียง AI/โคลนปรับโทนไม่ได้)'})), S.tone,
-  v => { S.tone = v; save(); renderVoice(); if (P.state === 'playing' && P.kind === 'device') speakDevice(); });
+$('#fTone').onclick = () => openVoiceFx();
 $('#fStyle').onclick = () => optionSheet('รูปแบบเสียง', Object.entries(STYLES).map(([k,s]) => ({v:k, n:s.n, d:s.d})), S.style,
   v => { S.style = v; save(); renderVoice(); onText(); });
 $('#fAdv').onclick = () => openProc();
+
+/* ---------------- voice changer (gender / age / effects) ---------------- */
+const DERIV = [  // [base local voice, gender, age, name, desc]
+  ['th-female-v2','m','adult','🧔 ผู้ชาย (แปลงจากเสียงผู้หญิง 1)','เสียงผู้ชายอีกแบบ นุ่มกว่าเสียงผู้ชายเดิม'],
+  ['th-male-v2','f','adult','👩 ผู้หญิง (แปลงจากเสียงผู้ชาย 1)','เสียงผู้หญิงโทนต่ำ ๆ'],
+  ['th-female-v2','f','child','👧 เด็กหญิง','เสียงใส ๆ แบบเด็ก'],
+  ['th-male-v2','m','child','👦 เด็กชาย','เสียงเด็กผู้ชาย'],
+  ['th-female-v1','f','teen','👱‍♀️ วัยรุ่นหญิง','สดใสขึ้นเล็กน้อย'],
+  ['th-male-narrator','m','teen','🧑 วัยรุ่นชาย','หนุ่มกว่าเสียงบรรยาย'],
+  ['th-female-v2','f','elder','👵 คุณยาย','เสียงสั่นนิด ๆ แบบผู้สูงอายุ'],
+  ['th-male-v2','m','elder','👴 คุณตา','ทุ้ม สั่นเล็กน้อย'],
+];
+function srcGenderOf(v){
+  if (!v) return null;
+  const mf = s => /^f/i.test(s || '') ? 'f' : /^m/i.test(s || '') ? 'm' : null;
+  if (v.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id); return l ? (l[3] === 'ผู้ชาย' ? 'm' : 'f') : null; }
+  if (v.type === 'gcloud') return mf(((gVoices || G_FALLBACK).find(x => x[0] === v.id) || [])[1]);
+  if (v.type === 'azure') return mf(((azVoices || AZ_FALLBACK).find(x => x[0] === v.id) || [])[1]);
+  if (v.type === 'ai') return ({nova:'f', shimmer:'f', echo:'m', onyx:'m'})[v.id] || null;
+  if (v.type === 'clone') return v.rec?.gender || null;
+  if (v.type === 'device'){ const n = (v.obj?.name || '').toLowerCase(); return /female|woman|kanya|premwadee|achara|narisa/.test(n) ? 'f' : /male|\bman\b|niwat|pattara/.test(n) ? 'm' : null; }
+  return null;
+}
+const devPitchNow = v => window.VFX ? VFX.devPitch(S.fx, srcGenderOf(v)) : 1;
+function fxChanged(){
+  save(); renderVoice(); P.key = ''; P.lastFile = null;
+  if (P.state === 'playing' && P.kind === 'device') speakDevice();
+}
+function openVoiceFx(){
+  if (!window.VFX) return toast('โหลดตัวแปลงเสียงไม่สำเร็จ ลองรีเฟรช', true);
+  const v = curVoice(), fx = S.fx = VFX.norm(S.fx), sg = srcGenderOf(v);
+  const chips = (key, list) => `<div class="chips" data-g="${key}">${list.map(o => `<button class="chip ${fx[key] === o[0] ? 'on' : ''}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div>`;
+  const srcList = [['auto', 'อัตโนมัติ' + (sg ? ` (${sg === 'm' ? 'ชาย' : 'หญิง'})` : '')], ['f', 'หญิง'], ['m', 'ชาย']];
+  const rng = (id, label, min, max, step, val, fmt) => `<div class="fxr"><div class="fxl"><span>${label}</span><b id="${id}V">${fmt(val)}</b></div><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"></div>`;
+  const fmtSt = x => (x > 0 ? '+' : '') + (+x) + (Math.abs(x) >= 1 || x == 0 ? '' : ''), fmtPct = x => Math.round(x * 100 / 0.6) + '%';
+  let h = sheetHead('🎭 เปลี่ยนเสียง & เอฟเฟกต์');
+  h += `<p class="hint" style="margin-top:0">ใช้กับ: <b>${esc(v.name)}</b> — ประมวลผลในเครื่อง ฟรี ไม่ใช้ API</p>`;
+  if (v.type === 'device') h += `<div class="lim">เสียงระบบในเครื่องเบราว์เซอร์<b>ไม่ให้ดึงเสียงมาแปลง</b> จึงปรับได้แค่ “ระดับเสียง” (เพศ/วัยแบบคร่าว ๆ) — เอฟเฟกต์เต็ม (แปลงเพศจริง หุ่นยนต์ โทรโข่ง ฯลฯ) ต้องใช้เสียง AI<div class="row2" style="margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="fxToLocal">ใช้เสียง AI ในเครื่อง (ฟรี)</button>${commercialVoices()[0] ? '<button class="btn sm alt" id="fxToComm">ใช้เสียง 💼 Google/Azure</button>' : ''}</div></div>`;
+  h += `<h4>เพศ</h4>${chips('gender', VFX.GENDERS)}`;
+  h += `<h4>วัย</h4>${chips('age', VFX.AGES)}`;
+  h += `<h4>เสียงต้นฉบับเป็น <small style="color:var(--mut);font-weight:400">ใช้คำนวณการแปลงเพศ</small></h4>${chips('srcG', srcList)}`;
+  VFX.GROUPS.forEach(([g, gn]) => {
+    h += `<h4>${gn}</h4><div class="fxgrid">` + VFX.PRESETS.filter(p => p[3] === g).map(p => `<button class="fxp ${fx.effect === p[0] ? 'on' : ''}" data-e="${p[0]}"><span>${p[1]}</span><small>${p[2]}</small></button>`).join('') + `</div>`;
+  });
+  h += `<h4>ปรับละเอียด</h4>`;
+  h += rng('fxPitch', 'ระดับเสียง (คีย์)', -12, 12, 1, fx.pitch, fmtSt);
+  h += rng('fxForm', 'ขนาดลำคอ — ลบ = ใหญ่/ทุ้ม · บวก = เล็ก/ใส', -6, 6, 0.5, fx.formant, fmtSt);
+  h += rng('fxRev', 'เสียงก้อง (reverb)', 0, 0.6, 0.05, fx.rev, fmtPct);
+  h += rng('fxEcho', 'เสียงสะท้อน (echo)', 0, 0.6, 0.05, fx.echo, fmtPct);
+  h += `<div class="row2" style="margin-top:12px"><button class="btn alt" style="flex:1" id="fxReset">↺ รีเซ็ต</button><button class="btn" style="flex:2" id="fxPlay">▶ ฟังตัวอย่าง</button></div>`;
+  h += `<button class="btn alt" style="width:100%;margin-top:8px" id="fxFile">🎧 แปลงไฟล์เสียง / คลิป / อัดเสียงตัวเอง</button>`;
+  h += `<p class="hint">วิธีทำงาน: แยก “ระดับเสียง (pitch)” กับ “รูปร่างเสียง/ลำคอ (formant)” ออกจากกันด้วย phase vocoder + spectral envelope แล้วประกอบใหม่ จึงเปลี่ยนเพศ/วัยได้โดยไม่เป็นเสียงชิปมังก์ ตามด้วยชุดเอฟเฟกต์ (ฟิลเตอร์ ดิสทอร์ชัน ก้อง สะท้อน ฯลฯ)<br>ใช้ได้กับเสียง AI ในเครื่อง · Google · Azure · Pollinations · เสียงโคลน และเสียงพากย์ในสตูดิโอวิดีโอ<br>💼 สิทธิ์เชิงพาณิชย์เป็นไปตามเสียงต้นทาง (Google/Azure/เสียงตัวเอง = ใช้หารายได้ได้)</p>`;
+  openSheet(h, el => {
+    el.querySelectorAll('.chips[data-g]').forEach(c => c.querySelectorAll('.chip').forEach(b => b.onclick = () => {
+      fx[c.dataset.g] = b.dataset.v; c.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); fxChanged();
+    }));
+    el.querySelectorAll('.fxp').forEach(b => b.onclick = () => {
+      fx.effect = b.dataset.e; el.querySelectorAll('.fxp').forEach(x => x.classList.toggle('on', x === b)); fxChanged();
+      if (v.type === 'device' && fx.effect !== 'none' && !VFX.PRESETS.find(p => p[0] === fx.effect)[4].p) toast('เอฟเฟกต์นี้ต้องใช้เสียง AI — เสียงระบบในเครื่องเปลี่ยนได้แค่ระดับเสียง', true);
+    });
+    [['fxPitch','pitch',fmtSt],['fxForm','formant',fmtSt],['fxRev','rev',fmtPct],['fxEcho','echo',fmtPct]].forEach(([id, k, f]) => {
+      const r = el.querySelector('#' + id); setRangeFill(r);
+      r.oninput = () => { fx[k] = +r.value; el.querySelector('#' + id + 'V').textContent = f(+r.value); setRangeFill(r); };
+      r.onchange = fxChanged;
+    });
+    el.querySelector('#fxReset').onclick = () => { S.fx = VFX.norm({}); fxChanged(); openVoiceFx(); };
+    el.querySelector('#fxPlay').onclick = async e => {
+      const b = e.currentTarget, text = (ta.value.trim().slice(0, 140) || lang()[3]);
+      stopAll();
+      if (v.type === 'device'){
+        if (!v.obj) return toast(v.desc, true);
+        const u = new SpeechSynthesisUtterance(text); u.voice = v.obj; u.lang = v.obj.lang; u.rate = effRate(); u.pitch = devPitchNow(v); u.volume = Math.min(1, S.vol);
+        synth.cancel(); synth.speak(u); return;
+      }
+      b.disabled = true; b.textContent = 'กำลังสร้าง + แปลงเสียง…';
+      try { playOnce(await synthesize(v, text)); } catch(err){ toast(err.message || String(err), true); }
+      b.disabled = false; b.textContent = '▶ ฟังตัวอย่าง';
+    };
+    el.querySelector('#fxFile').onclick = () => openFxFile();
+    el.querySelector('#fxToLocal')?.addEventListener('click', () => {
+      const want = fx.gender !== 'orig' ? fx.gender : 'f';
+      const l = LOCAL_VOICES.find(x => x[2] === S.lang && (x[3] === 'ผู้ชาย') === (want === 'm')) || LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0];
+      S.voice = {type:'local', id:l[0]}; fxChanged(); openVoiceFx(); toast('ใช้ ' + l[1] + ' แล้ว');
+    });
+    el.querySelector('#fxToComm')?.addEventListener('click', () => { const c = commercialVoices()[0]; S.voice = {type:c.type, id:c.id}; fxChanged(); openVoiceFx(); });
+  });
+}
+/* convert any audio/video file or a fresh mic recording with the current voice settings */
+function openFxFile(){
+  const fx = VFX.norm(S.fx);
+  let h = sheetHead('🎧 แปลงไฟล์เสียง / อัดเสียง');
+  h += `<p class="hint" style="margin-top:0">ใช้การตั้งค่าปัจจุบัน: <b>${esc(VFX.label(fx))}</b> — ไฟล์เสียงหรือคลิปวิดีโอ (ใช้เฉพาะเสียง) ยาวได้หลายนาที</p>`;
+  h += `<h4>เสียงในไฟล์เป็น</h4><div class="chips" id="ffSrc"><button class="chip ${fx.srcG !== 'm' ? 'on' : ''}" data-v="f">หญิง</button><button class="chip ${fx.srcG === 'm' ? 'on' : ''}" data-v="m">ชาย</button></div>`;
+  h += `<div class="row2" style="margin-top:12px"><label class="btn" style="flex:1;text-align:center">📁 เลือกไฟล์<input type="file" id="ffIn" accept="audio/*,video/*" hidden></label><button class="btn alt" style="flex:1" id="ffRec">🎤 อัดเสียง</button></div>`;
+  h += `<div id="ffOut" style="margin-top:12px"></div>`;
+  h += `<p class="hint">💼 แปลงเสียงตัวเอง หรือเสียงที่คุณมีสิทธิ์ใช้ = ใช้หารายได้ได้ · อย่าใช้ปลอมเป็นบุคคลจริงเพื่อหลอกลวง</p>`;
+  openSheet(h, el => {
+    let src = fx.srcG === 'm' ? 'm' : 'f', mr = null;
+    el.querySelectorAll('#ffSrc .chip').forEach(b => b.onclick = () => { src = b.dataset.v; el.querySelectorAll('#ffSrc .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    const out = el.querySelector('#ffOut');
+    async function run(blob, name){
+      out.innerHTML = `<div class="prog2"><i style="width:2%"></i></div><p class="hint">กำลังแปลงเสียง…</p>`;
+      try {
+        const t0 = performance.now();
+        const res = await VFX.applyLong(blob, Object.assign({}, S.fx, {srcG: src}), src, p => { const i = out.querySelector('.prog2 i'); if (i) i.style.width = Math.round(p * 100) + '%'; });
+        const f = new File([res], `genmedi-vfx-${(name || 'voice').replace(/\.[^.]+$/, '').slice(0, 30)}-${stamp()}.wav`, {type:'audio/wav'});
+        out.innerHTML = `<audio controls src="${URL.createObjectURL(f)}" style="width:100%"></audio><p class="hint">เสร็จใน ${((performance.now() - t0) / 1000).toFixed(1)} วินาที · ${(f.size / 1048576).toFixed(1)} MB</p><div class="row2"><button class="btn" style="flex:1" id="ffSave">⬇️ บันทึก</button><button class="btn alt" style="flex:1" id="ffShare">📤 แชร์ / Drive</button></div>`;
+        out.querySelector('#ffSave').onclick = () => { saveBlob(f, f.name); saveToMac(f, 'audio', 'voice-fx'); };
+        out.querySelector('#ffShare').onclick = () => shareFiles([f], 'Gen Medi');
+        addHistory({kind:'audio', text:'แปลงเสียง: ' + VFX.label(S.fx), voice:'Voice FX', blob:f});
+      } catch(e){ out.innerHTML = `<p class="lim">แปลงไม่สำเร็จ: ${esc(e.message || String(e))} — ไฟล์บางชนิดเบราว์เซอร์ถอดเสียงไม่ได้ ลอง MP3/WAV/M4A/MP4</p>`; }
+    }
+    el.querySelector('#ffIn').onchange = e => { const f = e.target.files[0]; if (f) run(f, f.name); };
+    el.querySelector('#ffRec').onclick = async e => {
+      const b = e.currentTarget;
+      if (mr){ mr.stop(); return; }
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('อุปกรณ์นี้อัดเสียงในเว็บไม่ได้ — ใช้ “เลือกไฟล์” แทน', true);
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true}});
+        const mime = ['audio/webm;codecs=opus','audio/mp4','audio/webm','audio/ogg'].find(m => MediaRecorder.isTypeSupported?.(m)) || '';
+        const parts = []; mr = new MediaRecorder(st, mime ? {mimeType:mime} : {});
+        mr.ondataavailable = ev => ev.data.size && parts.push(ev.data);
+        mr.onstop = () => { st.getTracks().forEach(t => t.stop()); mr = null; b.textContent = '🎤 อัดเสียง'; run(new Blob(parts, {type: parts[0]?.type || 'audio/webm'}), 'mic'); };
+        mr.start(); b.textContent = '⏹ หยุดอัด';
+      } catch(err){ toast('เปิดไมค์ไม่ได้: ' + (err.message || err), true); }
+    };
+  });
+}
 
 /* ---------------- chunking ---------------- */
 function makeChunks(text, MAX){
@@ -537,8 +678,9 @@ function ui(){
   try { renderEst(); } catch(e){}
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st === 'playing' ? 'playing' : st === 'paused' ? 'paused' : 'none';
 }
+const pkey = (v, text) => v.type + ':' + v.id + '|' + (v.type === 'device' ? '' : (window.VFX?.sig(S.fx) || '')) + '|' + text;
 function prepare(v, text){
-  const key = v.type + ':' + v.id + '|' + text;
+  const key = pkey(v, text);
   if (P.key !== key){
     const max = v.type === 'device' ? 180 : (v.type === 'ai' || v.type === 'gcloud' || v.type === 'azure') ? 380 : v.type === 'local' ? 140 : 200;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
@@ -597,7 +739,7 @@ function speakDevice(){
   if (P.idx >= P.chunks.length) return finish();
   const v = P.voice, u = new SpeechSynthesisUtterance(P.chunks[P.idx]);
   if (v.obj){ u.voice = v.obj; u.lang = v.obj.lang; } else u.lang = lang()[2];
-  u.rate = effRate(); u.pitch = S.tone; u.volume = Math.min(1, S.vol);
+  u.rate = effRate(); u.pitch = devPitchNow(v); u.volume = Math.min(1, S.vol);
   const next = () => { if (my !== P.token || P.state !== 'playing') return; P.idx++; const g = (STYLES[S.style]||STYLES.natural).gap; g ? setTimeout(() => my === P.token && speakDevice(), g) : speakDevice(); };
   u.onend = next;
   u.onerror = e => { if (my !== P.token || e.error === 'interrupted' || e.error === 'canceled') return; next(); };
@@ -639,7 +781,14 @@ async function playRemote(){
 }
 
 /* ---------------- engines ---------------- */
-async function synthesize(v, text){
+async function synthesize(v, text, fx){
+  const b = await synthRaw(v, text);
+  fx = fx === undefined ? S.fx : fx;
+  if (!window.VFX?.active(fx)) return b;
+  try { return await VFX.apply(b, fx, srcGenderOf(v)); }
+  catch(e){ console.warn(e); toast('แปลงเสียงไม่สำเร็จ ใช้เสียงต้นฉบับแทน (' + (e.message || e) + ')', true); return b; }
+}
+async function synthRaw(v, text){
   if (v.type === 'gcloud' || v.type === 'azure'){ const t0 = performance.now(); const b = await (v.type === 'gcloud' ? gcloudTTS(text, v.id) : azureTTS(text, v.id)); SPEED.learn(v.type, (performance.now() - t0) / Math.max(1, text.length)); return b; }
   if (v.type === 'local') return localTTS(text, v.id);
   if (v.type === 'ai'){ const t0 = performance.now(); const b = await pollinationsTTS(text, v.id); SPEED.learn('ai', (performance.now() - t0) / Math.max(1, text.length)); return b; }
@@ -1040,8 +1189,8 @@ async function buildFile(quiet){
     });
     return null;
   }
-  if (P.lastFile && P.key === v.type + ':' + v.id + '|' + text) return P.lastFile;
-  if (P.state === 'idle') prepare(v, text); else if (P.key !== v.type + ':' + v.id + '|' + text){ stopAll(); prepare(v, text); }
+  if (P.lastFile && P.key === pkey(v, text)) return P.lastFile;
+  if (P.state === 'idle') prepare(v, text); else if (P.key !== pkey(v, text)){ stopAll(); prepare(v, text); }
   const n = P.chunks.length;
   for (let i = 0; i < n; i++){
     status(`กำลังสร้างไฟล์เสียง ${i+1}/${n}…`); $('#prog').style.width = (i / n * 100) + '%';
@@ -1560,7 +1709,7 @@ async function genImage(prompt, ratio){
   } finally { S.imgRatio = keep; }
 }
 /* public API used by studio.js */
-window.GM = { S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
+window.GM = { srcGenderOf, openVoiceFx, S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
   curVoice, synthesize, makeChunks, mergeAudio, decode, encodeWav, genImage, allowed, lic, licTag, voiceLicKey, go, status, effRate,
   RATIOS, IMG_STYLES, openSettings, openProc, renderEst, gconnect, isUrl, getSpec, fmtDur, SPEED, gradio: () => gradio,
   get serverInfo(){ return SERVER_INFO; }, ta };
