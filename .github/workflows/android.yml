@@ -34,10 +34,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v${{ github.run_number }}
-          name: AI Voice Android v1.0.${{ github.run_number }}
+          name: Gen Medi Android v1.0.${{ github.run_number }}
           make_latest: true
           files: ai-voice.apk
           body: |
-            ดาวน์โหลด ai-voice.apk แล้วติดตั้งบน Android (อนุญาต "ติดตั้งแอปที่ไม่รู้จัก" ให้ Chrome/Files)
+            ดาวน์โหลด ai-voice.apk (Gen Medi) แล้วติดตั้งบน Android — ติดตั้งทับเวอร์ชันเดิมได้เลย (อนุญาต "ติดตั้งแอปที่ไม่รู้จัก" ให้ Chrome/Files)
             แอปเปิดผ่าน Chrome ในเครื่อง — ต้องมี Google Chrome ติดตั้งอยู่
             ลิงก์เว็บ (Mac / เครื่องทั่วไป): https://mengnattawitmarin.github.io/ai-voice/
