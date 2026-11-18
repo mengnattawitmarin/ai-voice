@@ -1,0 +1,33 @@
+name: Vendor JS libraries
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/vendor.yml']
+permissions:
+  contents: write
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Fetch libraries
+        run: |
+          mkdir -p vendor tmp && cd tmp
+          npm pack mp4-muxer@5 lamejs@1.2.1 --silent
+          for f in *.tgz; do tar xzf "$f"; mv package "${f%.tgz}"; done
+          ls -R | head -50
+          cp mp4-muxer-*/build/mp4-muxer.mjs ../vendor/mp4-muxer.mjs
+          cp lamejs-*/lame.min.js ../vendor/lame.min.js
+          cp mp4-muxer-*/LICENSE ../vendor/mp4-muxer.LICENSE || true
+          cp lamejs-*/LICENSE ../vendor/lamejs.LICENSE || true
+          cd .. && rm -rf tmp && ls -la vendor
+      - name: Commit
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add vendor
+          git commit -m "Vendor mp4-muxer and lamejs" || true
+          git push
