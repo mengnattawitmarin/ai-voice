@@ -177,14 +177,17 @@ def ensure_model(key):
     m["total"] = total
     cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub" / ("models--" + m["repo"].replace("/", "--"))
     stop = threading.Event()
+    # newer huggingface_hub downloads through hf_xet, which fills its own chunk cache before the file appears → count that growth too
+    xet = cache.parent.parent / "xet"
+    xet0 = _dir_size(xet)
 
     def watch():
         while not stop.is_set():
-            size = _dir_size(cache)
+            size = _dir_size(cache) + max(0, _dir_size(xet) - xet0)
             m["mb"] = int(size / 1e6)
             if total:
                 m["pct"] = min(99, int(size * 100 / total))
-            time.sleep(1)
+            time.sleep(2)
 
     threading.Thread(target=watch, daemon=True).start()
     try:
@@ -192,7 +195,8 @@ def ensure_model(key):
         m.update(path=p, state="ready", pct=100)
         return p
     except Exception as e:
-        m.update(state="error", error=str(e)[:300])
+        m.update(state="error", error=(type(e).__name__ + ": " + str(e))[:300])
+        print(f"[download] {key} failed:", repr(e), flush=True)
         raise
     finally:
         stop.set()
