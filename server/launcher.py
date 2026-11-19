@@ -48,7 +48,7 @@ def port_busy(p):
 
 
 def req_hash():
-    return hashlib.sha1(REQ.read_bytes() + sys.version.encode()).hexdigest()[:16]
+    return hashlib.sha1(REQ.read_bytes() + ("%d.%d" % sys.version_info[:2]).encode()).hexdigest()[:16]
 
 
 def venv_py():
