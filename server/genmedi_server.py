@@ -38,7 +38,16 @@ from starlette.concurrency import run_in_threadpool
 VERSION = "2.0.0"
 PORT = int(os.environ.get("GENMEDI_PORT", "7861"))
 DATA = Path(os.environ.get("GENMEDI_DATA", Path.home() / "Library" / "Application Support" / "GenMedi"))
-WEB = Path(os.environ.get("GENMEDI_WEB", Path(__file__).resolve().parent.parent))
+def _find_web():
+    """Folder with the web app (index.html): env var, then the checkout this file lives in, then the app bundle."""
+    here = Path(__file__).resolve().parent
+    for c in (os.environ.get("GENMEDI_WEB"), here.parent, here.parent / "web", Path.home() / "GenMedi" / "app"):
+        if c and (Path(c) / "index.html").exists():
+            return Path(c)
+    return Path(os.environ.get("GENMEDI_WEB") or here.parent)
+
+
+WEB = _find_web()
 BIN = Path(os.environ.get("GENMEDI_BIN", Path(__file__).resolve().parent / "bin"))
 APP_URL = os.environ.get("APP_URL", "https://mengnattawitmarin.github.io/ai-voice/")
 DATA.mkdir(parents=True, exist_ok=True)
@@ -1080,6 +1089,17 @@ def job_result(jid: str):
     if j.get("path"):
         return FileResponse(j["path"], media_type=j.get("mime") or "application/octet-stream")
     return JSONResponse(j.get("result") or {})
+
+
+# web app (same files as the GitHub Pages site) — mounted last so /api/* routes win
+if (WEB / "index.html").exists():
+    app.mount("/", StaticFiles(directory=str(WEB), html=True), name="web")
+else:
+    @app.get("/")
+    def no_web():
+        return Response(f"""<meta charset="utf-8"><body style="font-family:sans-serif;background:#070b22;color:#e8eaff;padding:24px">
+<h2>Gen Medi เซิร์ฟเวอร์ทำงานแล้ว ✅</h2><p>แต่ไม่พบไฟล์หน้าแอปที่ <code>{WEB}</code></p>
+<p>เปิดหน้าแอปแทนได้ที่ <a style="color:#8ab4ff" href="{APP_URL}?server=http://localhost:{PORT}">{APP_URL}?server=http://localhost:{PORT}</a></p></body>""", media_type="text/html")
 
 
 def cleanup_old_videos(days=2):
