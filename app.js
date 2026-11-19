@@ -416,7 +416,7 @@ setInterval(() => { if (MAC.on && document.visibilityState === 'visible') MAC.re
 function curVoice(){
   let v = S.voice;
   if (!v && S.commercial && MAC.on){ const c = commercialVoices()[0]; if (c) v = {type:c.type, id:c.id}; }
-  if (v?.type === 'mac'){ const s = MAC.speakers().find(x => x.id === v.id) || MAC.speakers()[0]; return {type:'mac', id:s.id, g:s.gender, name: s.name + ' · Mac', desc: 'KhanomTan บน Mac · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac')}; }
+  if (v?.type === 'mac'){ const s = MAC.speakers().find(x => x.id === v.id) || MAC.speakers()[0]; return {type:'mac', id:s.id, g:s.gender, name: s.name + ' · Mac', desc: (s.mine ? 'โมเดลเสียงไทยที่คุณเทรนเอง' + (s.step ? ' · ขั้นที่ ' + s.step : '') : 'KhanomTan บน Mac') + ' · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac')}; }
   if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้ · 🚫 ส่วนตัว'}; }
   if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงของฉัน (OpenVoice บน Mac) · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac'), rec:c}; }
   const list = devForLang();
@@ -1525,7 +1525,7 @@ async function genImage(prompt, ratio){
 /* public API used by studio.js */
 window.GM = { srcGenderOf, openVoiceFx, S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
   curVoice, synthesize, makeChunks, mergeAudio, decode, encodeWav, genImage, allowed, lic, licTag, voiceLicKey, go, status, effRate,
-  RATIOS, IMG_STYLES, openSettings, openProc, setRangeFill, renderEst, isUrl, getSpec, fmtDur, SPEED, MAC, ta };
+  RATIOS, IMG_STYLES, openSettings, openProc, renderVoice, setRangeFill, renderEst, isUrl, getSpec, fmtDur, SPEED, MAC, ta };
 window.dispatchEvent(new Event('gm:ready'));
 const h0 = location.hash.slice(1); go(PAGES[h0] ? h0 : 'home');
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });

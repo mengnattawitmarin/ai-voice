@@ -846,7 +846,7 @@ def info(req: Request):
         "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "mb", "total", "error")} for k, v in MODELS.items()},
         "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
-        "speakers": kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()],
+        "speakers": my_speakers() + (kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()]),
         "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_kt_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
         "video_ok": (RAM_GB or 16) >= 16, **STATS,
     }
@@ -895,9 +895,12 @@ async def tts(req: Request):
     def run():
         t0 = time.time()
         import numpy as np
-        s = get_kt()
-        names = s.tts_model.speaker_manager.speaker_names
-        sp = speaker if speaker in names else names[0]
+        if speaker.startswith("my:"):          # the user's own trained Thai voice
+            s, sp = get_my(speaker[3:])
+        else:
+            s = get_kt()
+            names = s.tts_model.speaker_manager.speaker_names
+            sp = speaker if speaker in names else names[0]
         try:
             s.tts_model.length_scale = float(j.get("slow") or 1.12)   # a bit slower = clearer Thai
         except Exception:  # noqa
@@ -1385,7 +1388,8 @@ def ds_status(name: str):
     tot = sum(v.get("dur", 0) for v in m.values())
     return {"name": d.name, "count": len(m), "minutes": round(tot / 60, 1), "items": m,
             "checked": sum(1 for v in m.values() if v.get("qc")), "bad": sum(1 for v in m.values() if v.get("qc") and not v["qc"].get("ok")),
-            "train": TRAIN.get(d.name)}
+            "train": {k: v for k, v in (TRAIN.get(d.name) or {}).items() if k != "proc"} or None,
+            "model": (json.loads((MY_MODELS / d.name / "meta.json").read_text()) if (MY_MODELS / d.name / "meta.json").exists() else None)}
 
 
 @app.post("/api/ds/{name}/clip")
@@ -1477,6 +1481,248 @@ def ds_check(name: str, all: int = Form(0)):
 
 
 TRAIN = {}
+MY_MODELS = DATA / "mymodels"
+TRAIN_CODE = r"""
+import os, sys, json, math
+a = json.load(open(sys.argv[1]))
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+import torch, librosa, soundfile as sf
+from TTS.config import load_config
+from TTS.tts.configs.shared_configs import BaseDatasetConfig
+from TTS.tts.datasets import load_tts_samples
+from TTS.tts.models.vits import Vits
+from TTS.tts.utils.speakers import SpeakerManager
+from trainer import Trainer, TrainerArgs
+
+cfg = load_config(a["base_config"])
+sr = cfg.audio.sample_rate
+work = a["work"]
+os.makedirs(work + "/wavs", exist_ok=True)
+lines = []
+for k, t in a["items"]:
+    dst = f"{work}/wavs/{k}.wav"
+    if not os.path.exists(dst):
+        y, _ = librosa.load(f'{a["src"]}/{k}.wav', sr=sr)
+        sf.write(dst, y, sr)
+    lines.append(f"{k}|{t}")
+open(work + "/metadata.csv", "w", encoding="utf8").write("\n".join(lines))
+print("GMSTAGE prep", flush=True)
+
+def fmt(root_path, meta_file, **kw):
+    out = []
+    for line in open(os.path.join(root_path, meta_file), encoding="utf8"):
+        if "|" in line:
+            k, t = line.rstrip("\n").split("|", 1)
+            out.append({"text": t, "audio_file": os.path.join(root_path, "wavs", k + ".wav"), "speaker_name": a["speaker"], "language": "th-th", "root_path": root_path})
+    return out
+
+cfg.datasets = [BaseDatasetConfig(formatter="gm", dataset_name="gm", meta_file_train="metadata.csv", path=work, language="th-th")]
+train, evals = load_tts_samples(cfg.datasets, eval_split=True, formatter=fmt, eval_split_size=max(4, min(24, len(lines) // 25)))
+
+# d-vectors of the new speaker, added next to KhanomTan's own
+dv = cfg.d_vector_file[0] if isinstance(cfg.d_vector_file, list) else cfg.d_vector_file
+emb = torch.load(dv, map_location="cpu") if dv and os.path.exists(dv) else {}
+sm = SpeakerManager(encoder_model_path=a["se_model"], encoder_config_path=a["se_config"], use_cuda=False)
+for i, smp in enumerate(train + evals):
+    e = sm.compute_embedding_from_clip(smp["audio_file"])
+    emb[smp["audio_unique_name"]] = {"name": a["speaker"], "embedding": list(map(float, e))}
+    if i % 25 == 0:
+        print(f"GMSTAGE embed {i}/{len(train) + len(evals)}", flush=True)
+torch.save(emb, work + "/speakers.pth")
+cfg.d_vector_file = [work + "/speakers.pth"]
+cfg.model_args.d_vector_file = [work + "/speakers.pth"]
+cfg.model_args.use_d_vector_file = True
+cfg.use_speaker_embedding = False
+cfg.model_args.use_speaker_embedding = False
+
+bs = a["batch"]
+steps_ep = max(1, math.ceil(len(train) / bs))
+cfg.epochs = max(1, math.ceil(a["steps"] / steps_ep))
+cfg.output_path = work + "/run"
+cfg.run_name = "gm"
+cfg.batch_size = bs
+cfg.eval_batch_size = 4
+cfg.num_loader_workers = 0
+cfg.num_eval_loader_workers = 0
+cfg.mixed_precision = False
+cfg.print_step = 10
+cfg.save_step = a["save_step"]
+cfg.save_n_checkpoints = 2
+cfg.save_checkpoints = True
+cfg.run_eval = True
+cfg.test_delay_epochs = 10 ** 6
+cfg.test_sentences = []
+cfg.lr_gen = cfg.lr_disc = a["lr"]
+cfg.print_eval = False
+print(f"GMSTAGE train total={cfg.epochs * steps_ep}", flush=True)
+
+model = Vits.init_from_config(cfg, train + evals)
+args = TrainerArgs(restore_path=a["ckpt"]) if not a.get("continue") else TrainerArgs(continue_path=a["continue"])
+dev = a["device"]
+if dev == "mps" and hasattr(args, "use_accelerate"):
+    args.use_accelerate = True
+trainer = Trainer(args, cfg, cfg.output_path, model=model, train_samples=train, eval_samples=evals)
+try:
+    print("GMSTAGE device " + str(next(trainer.model.parameters()).device), flush=True)
+except Exception:
+    pass
+trainer.fit()
+print("GMSTAGE done", flush=True)
+"""
+
+
+def train_paths(name):
+    d = ds_dir(name)
+    return d, DATA / "training" / d.name
+
+
+def latest_ckpt(work):
+    import glob
+    c = [p for p in glob.glob(str(work / "run" / "**" / "*.pth"), recursive=True) if Path(p).name.startswith(("checkpoint_", "best_model"))]
+    return max(c, key=os.path.getmtime) if c else None
+
+
+def train_worker(name, steps, device):
+    d, work = train_paths(name)
+    t = TRAIN[d.name]
+    m = ds_meta(d)
+    items = [(k, v["text"].replace("|", " ")) for k, v in m.items() if not (v.get("qc") and not v["qc"].get("ok")) and (d / "wavs" / f"{k}.wav").exists()]
+    kt = Path(ensure_model("tts"))
+    get_kt()   # writes the fixed KhanomTan config with absolute paths
+    args = {"base_config": str(DATA / "khanomtan-config.json"), "ckpt": str(kt / "best_model.pth"), "se_model": str(kt / "model_se.pth"),
+            "se_config": str(kt / "config_se.json"), "src": str(d / "wavs"), "work": str(work), "items": items, "speaker": d.name,
+            "steps": steps, "batch": 16 if (RAM_GB or 16) >= 24 else 8, "save_step": 500, "lr": 1e-4, "device": device}
+    prev = latest_ckpt(work) if t.get("resume") else None
+    if prev:
+        args["continue"] = str(Path(prev).parent)
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "args.json").write_text(json.dumps(args, ensure_ascii=False))
+    (work / "train.py").write_text(TRAIN_CODE)
+    env = dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK="1", PYTHONUNBUFFERED="1")
+    if device == "cpu":
+        env["CUDA_VISIBLE_DEVICES"] = ""
+        env["PYTORCH_MPS_DISABLE"] = "1"
+    log = open(work / "train.log", "a", encoding="utf8")
+    p = subprocess.Popen([sys.executable, str(work / "train.py"), str(work / "args.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, env=env, cwd=str(work))
+    t.update(state="running", proc=p, device=device, clips=len(items), msg="เตรียมข้อมูล…", started=time.time())
+    try:   # keep the Mac awake while training runs
+        subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa
+        pass
+    tail = []
+    for line in p.stdout:
+        log.write(line)
+        tail = (tail + [line.rstrip()])[-40:]
+        if "GMSTAGE embed" in line:
+            t["msg"] = "วิเคราะห์ลักษณะเสียง " + line.split("embed", 1)[1].strip()
+        elif "GMSTAGE device" in line:
+            t["device"] = "GPU (MPS)" if "mps" in line else "CPU"
+        elif "GMSTAGE train" in line:
+            t["total"] = int(re.search(r"total=(\d+)", line).group(1))
+            t["msg"] = "กำลังเทรน…"
+        mm = re.search(r"GLOBAL_STEP:\s*(\d+)", line)
+        if mm:
+            t["step"] = int(mm.group(1))
+            el = time.time() - t["started"]
+            if t.get("total") and t["step"] > 20:
+                t["eta"] = round(el / t["step"] * (t["total"] - t["step"]))
+            t["msg"] = f"กำลังเทรน ขั้นที่ {t['step']}" + (f"/{t['total']}" if t.get("total") else "")
+        ml = re.search(r"loss_1:\s*([\d.]+)", line) or re.search(r"\bloss:\s*([\d.]+)", line)
+        if ml:
+            t["loss"] = float(ml.group(1))
+    p.wait()
+    log.close()
+    t["tail"] = tail[-12:]
+    t.pop("proc", None)
+    if t.get("stop"):
+        t.update(state="stopped", msg="หยุดแล้ว — ใช้ checkpoint ล่าสุดได้")
+    elif p.returncode == 0:
+        t.update(state="done", msg="เทรนเสร็จแล้ว 🎉")
+    elif device == "mps" and (t.get("step") or 0) < 5:
+        print("[train] GPU (MPS) failed early — retrying on CPU", flush=True)
+        t.update(msg="GPU ของ Mac เทรนไม่ได้ — เปลี่ยนไปใช้ CPU (ช้ากว่า)…", step=0)
+        return train_worker(name, steps, "cpu")
+    else:
+        t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
+    if latest_ckpt(work):
+        try:
+            export_model(name)
+        except Exception as e:  # noqa
+            print("[train] export", e, flush=True)
+
+
+def export_model(name):
+    d, work = train_paths(name)
+    ck = latest_ckpt(work)
+    if not ck:
+        raise HTTPException(400, "ยังไม่มี checkpoint — รอให้เทรนถึงขั้นที่ 500 ก่อน")
+    out = MY_MODELS / d.name
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copy(ck, out / "model.pth")
+    shutil.copy(Path(ck).parent / "config.json", out / "config.json")
+    meta = {"name": d.name, "label": "🎓 เสียงไทยของฉัน" + ("" if d.name == "mine" else f" ({d.name})"), "ckpt": Path(ck).name,
+            "step": TRAIN.get(d.name, {}).get("step"), "t": int(time.time())}
+    (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+    _my.pop(d.name, None)
+    return meta
+
+
+_my = {}
+
+
+def get_my(name):
+    name = Path(name).name
+    out = MY_MODELS / name
+    if not (out / "model.pth").exists():
+        raise HTTPException(404, "ยังไม่มีโมเดลเสียงนี้ — เทรนก่อน")
+    key = (out / "model.pth").stat().st_mtime
+    if _my.get(name, (None,))[0] != key:
+        from TTS.utils.synthesizer import Synthesizer
+        _my[name] = (key, Synthesizer(tts_checkpoint=str(out / "model.pth"), tts_config_path=str(out / "config.json"), use_cuda=False))
+    return _my[name][1], name
+
+
+def my_speakers():
+    out = []
+    for m in sorted(MY_MODELS.glob("*/meta.json")) if MY_MODELS.exists() else []:
+        try:
+            j = json.loads(m.read_text())
+            out.append({"id": "my:" + j["name"], "name": j["label"], "gender": None, "mine": True, "step": j.get("step")})
+        except Exception:  # noqa
+            pass
+    return out
+
+
+@app.post("/api/ds/{name}/train")
+def ds_train(name: str, steps: int = Form(6000), resume: int = Form(0), device: str = Form("auto")):
+    d = ds_dir(name)
+    t = TRAIN.get(d.name)
+    if t and t.get("state") == "running":
+        raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
+    n = len([1 for v in ds_meta(d).values() if not (v.get("qc") and not v["qc"].get("ok"))])
+    if n < 50:
+        raise HTTPException(400, f"ข้อมูลน้อยเกินไป ({n} ประโยค) — ต้องมีอย่างน้อย 50 (แนะนำ 300+)")
+    model_guard("tts")
+    dev = device if device in ("mps", "cpu") else ("mps" if torch_device() == "mps" else "cpu")
+    TRAIN[d.name] = {"state": "starting", "msg": "กำลังเริ่ม…", "step": 0, "total": steps, "resume": bool(resume)}
+    threading.Thread(target=lambda: _safe(train_worker, d.name, int(steps), dev), daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/ds/{name}/train/stop")
+def ds_train_stop(name: str):
+    t = TRAIN.get(ds_dir(name).name) or {}
+    p = t.get("proc")
+    if p:
+        t["stop"] = True
+        p.terminate()
+    return {"ok": True}
+
+
+@app.post("/api/ds/{name}/export")
+def ds_export(name: str):
+    return export_model(name)
 
 
 if (WEB / "index.html").exists():
