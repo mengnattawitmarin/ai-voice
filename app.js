@@ -399,14 +399,14 @@ const MAC = {
     if (!this.on){ this.state = 'off'; renderQuota(); return null; }
     try { this.info = await (await this.call('/api/info', {}, 15000)).json(); LS.set('macInfo', this.info); }
     catch(e){ return null; }
-    renderQuota(); try { renderVoice(); renderEst(); renderMacBar(); } catch(e){}
+    renderQuota(); try { renderVoice(); renderEst(); renderMacBar(); renderLoraChips(); } catch(e){}
     return this.info;
   },
   json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
   form(path, fields, ms){ const fd = new FormData(); for (const [k, v] of Object.entries(fields)){ if (v == null) continue; if (v instanceof Blob) fd.append(k, v, v.name || 'file.' + extOf(v.type)); else fd.append(k, String(v)); } return this.call(path, {method:'POST', body: fd}, ms); },
   async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
   async editImage(file, prompt, seed){ const t0 = performance.now(); const r = await this.form('/api/img_edit', {image: file, prompt, seed}); const blob = await r.blob(); SPEED.learn('img-mac2-edit', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
-  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined}); const blob = await r.blob(); SPEED.learn('img-mac2-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
+  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined, lora: S.imgLora || undefined}); const blob = await r.blob(); SPEED.learn('img-mac2-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   speakers(){ return this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF; },
 };
 const commercialVoices = () => MAC.on ? MAC.speakers().map(s => ({type:'mac', id:s.id, g:s.gender})) : [];
@@ -1411,12 +1411,42 @@ $('#imgPrompt').value = LS.get('imgPrompt', '');
 $('#imgPrompt').oninput = e => LS.set('imgPrompt', e.target.value);
 $('#btnImgFromText').onclick = () => { const t = ta.value.trim(); if (!t) return toast('หน้าแปลงเสียงยังไม่มีข้อความ'); $('#imgPrompt').value = t.slice(0, 600); LS.set('imgPrompt', t.slice(0, 600)); toast('นำข้อความมาใช้แล้ว'); };
 function imgPrompt(prompt){ const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2]; return prompt + (st ? ', ' + st : ''); }
+/* ✨ prompt helper: Qwen on the Mac rewrites a (Thai) idea into a detailed English prompt */
+function enhKey(p){ return S.imgStyle + '|' + (S.imgLora || '') + '|' + p.trim(); }
+$('#imgEnhOn').checked = !!S.imgEnhance;
+$('#imgEnhBox').hidden = !S.imgEnhance;
+$('#imgEnhOn').onchange = e => { S.imgEnhance = e.target.checked; save(); $('#imgEnhBox').hidden = !S.imgEnhance; };
+$('#imgEnh').oninput = () => { $('#imgEnh').dataset.edited = '1'; };
+$('#imgEnhRe').onclick = async e => { const p = $('#imgPrompt').value.trim(); if (!p) return; const b = e.currentTarget; b.disabled = true; b.textContent = 'กำลังแต่ง…'; try { $('#imgEnh').dataset.key = ''; await enhancePrompt(p, true); } catch(err){ toast(err.message, true); } b.disabled = false; b.textContent = 'แต่งใหม่'; };
+async function enhancePrompt(p, force){
+  const box = $('#imgEnh'), key = enhKey(p);
+  if (!force && box.dataset.key === key && box.value.trim()) return box.value.trim();
+  const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2] || '';
+  const r = await window.GMTools.macJob('/api/llm', {
+    system: 'You write prompts for a photorealistic text-to-image model. Reply with ONE English prompt only, no quotes, no explanations.',
+    prompt: `Rewrite this idea as a vivid, specific English image prompt (40-70 words): subject and action, setting, lighting, camera angle and lens, mood, composition, important details. Keep every element the user asked for and add nothing that contradicts it. Do not ask for any written text, letters or logos in the image.${st ? ' Visual style: ' + st + '.' : ''}\nIdea: ${p}`,
+    max_tokens: 220}, j => { $('#imgStatus').textContent = j.state === 'queued' ? 'รอคิว AI บน Mac…' : '✨ AI กำลังแต่งคำสั่ง… (ครั้งแรกโหลดโมเดล ~4GB)'; });
+  const t = ((await r.json()).text || '').replace(/^["'\s]+|["'\s]+$/g, '').split('\n').filter(Boolean)[0] || '';
+  if (!t) throw new Error('AI ไม่ตอบ');
+  box.value = t; box.dataset.key = key; box.dataset.edited = '';
+  return t;
+}
+function renderLoraChips(){
+  const box = $('#imgLora'); if (!box) return;
+  const list = MAC.info?.loras || [];
+  if (S.imgLora && !list.some(l => l.name === S.imgLora)) S.imgLora = '';
+  box.innerHTML = [['', 'ไม่ใช้'], ...list.map(l => [l.name, '🎓 ' + (l.label || l.name)])].map(o => `<button class="chip ${o[0] === (S.imgLora || '') ? 'on' : ''}" data-v="${esc(o[0])}">${esc(o[1])}</button>`).join('')
+    + `<button class="chip" id="loraNew">＋ สอนโมเดลด้วยภาพของฉัน</button>`;
+  box.querySelectorAll('.chip[data-v]').forEach(b => b.onclick = () => { S.imgLora = b.dataset.v; save(); renderLoraChips(); renderEst(); });
+  $('#loraNew').onclick = () => openLoraTrainer();
+}
 function renderImgEngine(){
   const box = $('#imgEngine'); if (!box) return;
   const cur = IMG_MODE_LABEL[S.macImg] ? S.macImg : 'auto';
   chips(box, Object.entries(IMG_MODE_LABEL).map(([k, n]) => [k, k === 'auto' && MAC.info?.img_auto ? n + ' (' + IMG_MODE_LABEL[MAC.info.img_auto].replace(/^\S+ /, '') + ')' : n]), cur, async v => { S.macImg = v; save(); renderEst(); try { await MAC.json('/api/settings', {img_mode: v}); MAC.refresh(); } catch(e){} });
 }
 renderImgEngine();
+renderLoraChips();
 let imgBusy = false;
 function loadImg(url, ms = 120000){
   return new Promise((res, rej) => { const im = new Image(); const t = setTimeout(() => { im.src = ''; rej(new Error('หมดเวลา')); }, ms);
@@ -1432,15 +1462,83 @@ function shotActions(div, url, prompt){
   if (mac) mac.onclick = async () => { try { mac.disabled = true; await saveToMac(await shotFile(div, url), 'images', prompt.slice(0, 40), true); } finally { mac.disabled = false; } };
   const ed = div.querySelector('[data-ed]');
   if (ed) ed.onclick = () => openEdit(div, url, prompt);
+  const hr = div.querySelector('[data-hr]');
+  if (hr) hr.onclick = () => hiresShot(div, url, prompt);
   div.querySelector('[data-dl]').onclick = async () => { try { const f = await shotFile(div, url); saveBlob(f, f.name); } catch(e){ window.open(url, '_blank'); } };
   div.querySelector('[data-sh]').onclick = async () => { try { await shareFiles([await shotFile(div, url)], prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); } };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
 function showShot(div, im, url, prompt, note){
   im.alt = prompt;
-  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลดลงเครื่องนี้" title="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>${MAC.on ? `<button data-mac aria-label="บันทึกลง Mac" title="บันทึกลงโฟลเดอร์บน Mac">💾</button><button data-ed aria-label="แก้ภาพด้วยคำสั่ง" title="แก้ภาพด้วยคำสั่ง"><svg class="i"><use href="#i-pencil"/></svg></button>` : ''}</div>${note ? `<span class="note">${esc(note)}</span>` : ''}`;
+  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลดลงเครื่องนี้" title="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>${MAC.on ? `<button data-mac aria-label="บันทึกลง Mac" title="บันทึกลงโฟลเดอร์บน Mac">💾</button><button data-ed aria-label="แก้ภาพด้วยคำสั่ง" title="แก้ภาพด้วยคำสั่ง"><svg class="i"><use href="#i-pencil"/></svg></button><button data-hr aria-label="คมชัด 2K" title="ขยาย + เติมรายละเอียด 2K" style="font-size:11px;font-weight:700">2K</button>` : ''}</div>${note ? `<span class="note">${esc(note)}</span>` : ''}`;
   div.prepend(im); div._file = null; shotActions(div, url, prompt);
   if (MAC.on && S.macSave) shotFile(div, url).then(f => saveToMac(f, 'images', prompt.slice(0, 40))).catch(() => {});
+}
+async function hiresShot(div, url, prompt){
+  const nd = document.createElement('div'); nd.className = 'shot'; div.after(nd);
+  nd.innerHTML = `<div class="ld"><div class="spin"></div>กำลังทำภาพ 2K บน Mac…</div>`; nd.scrollIntoView({behavior:'smooth', block:'center'});
+  try {
+    const fd = new FormData(); fd.append('image', await shotFile(div, url), 'image.png'); fd.append('prompt', div._fp || imgPrompt(prompt));
+    const r = await window.GMTools.macJob('/api/hires', fd, j => { const l = nd.querySelector('.ld'); if (l) l.innerHTML = `<div class="spin"></div>${esc(j.state === 'queued' ? 'รอคิวบน Mac…' : (j.msg || 'กำลังทำ…') + (j.total && j.step ? ` ${j.step}/${j.total}` : ''))}`; });
+    const blob = await r.blob(), u2 = URL.createObjectURL(blob), im = await loadImg(u2);
+    showShot(nd, im, u2, prompt, `2K · ${im.naturalWidth}×${im.naturalHeight}`);
+    addHistory({kind:'image', prompt: prompt + ' · 2K', blob, lk: 'img-mac'});
+  } catch(e){ nd.innerHTML = `<div class="ld">${esc(e.message)}</div>`; }
+}
+/* 🎓 teach FLUX.2 Klein 4B a product / character / face / style from the user's own pictures (LoRA, trained on the Mac) */
+const LORA_KIND = [['product', '📦 สินค้า'], ['character', '🧸 ตัวละคร/มาสคอต'], ['person', '🙂 ใบหน้าคน'], ['style', '🎨 สไตล์ภาพ']];
+function openLoraTrainer(){
+  const cfg = Object.assign({id: 'my-' + Math.random().toString(36).slice(2, 6), label: '', kind: 'product', desc: '', steps: 1200}, LS.get('loraDraft', {}));
+  const saveD = () => LS.set('loraDraft', cfg);
+  let pollT = null;
+  openSheet(sheetHead('🎓 สอนโมเดลด้วยภาพของฉัน') + `
+    <p class="hint" style="margin-top:0">อัปโหลดภาพสิ่งเดียวกัน 15–40 ภาพ (หลายมุม หลายแสง หลายพื้นหลัง) → Mac เทรน LoRA บน FLUX.2 Klein 4B → วาดสิ่งนั้นได้ตรงทุกครั้ง · ใช้หารายได้ได้ (ภาพของคุณ + Apache-2.0)</p>
+    <label class="lbl2">ชื่อที่จะแสดง</label><input id="lrLabel" value="${esc(cfg.label)}" placeholder="เช่น แก้วกาแฟร้านเรา" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
+    <label class="lbl2">สอนเรื่องอะไร</label><div class="chips" id="lrKind">${LORA_KIND.map(k => `<button class="chip ${k[0] === cfg.kind ? 'on' : ''}" data-v="${k[0]}">${k[1]}</button>`).join('')}</div>
+    <label class="lbl2">อธิบายสั้นๆ (ภาษาอังกฤษจะดีที่สุด)</label><input id="lrDesc" value="${esc(cfg.desc)}" placeholder="เช่น white ceramic coffee mug with a green leaf logo" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
+    <div class="row2" style="margin-top:12px"><label class="btn" style="flex:1;text-align:center">📁 เพิ่มภาพ<input type="file" id="lrIn" accept="image/*" multiple hidden></label></div>
+    <div id="lrImgs" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px"></div>
+    <label class="lbl2">ความละเอียดการเทรน</label><div class="chips" id="lrSteps">${[[800, 'เร็ว'], [1200, 'มาตรฐาน'], [2000, 'ละเอียด']].map(([v, n]) => `<button class="chip ${v === cfg.steps ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
+    <div id="lrTrain" style="margin-top:12px"></div>
+    <p class="hint">ใบหน้าคน: ใช้เฉพาะภาพของคุณเองหรือคนที่อนุญาตแล้วเท่านั้น · ห้ามสอนโลโก้/ตัวละครของแบรนด์อื่น</p>`, el => {
+    const api = (p, o) => MAC.call('/api/lora/' + cfg.id + p, o, 120000);
+    el.querySelector('#lrLabel').oninput = e => { cfg.label = e.target.value; saveD(); };
+    el.querySelector('#lrDesc').oninput = e => { cfg.desc = e.target.value; saveD(); };
+    el.querySelectorAll('#lrKind .chip').forEach(b => b.onclick = () => { cfg.kind = b.dataset.v; saveD(); el.querySelectorAll('#lrKind .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    el.querySelectorAll('#lrSteps .chip').forEach(b => b.onclick = () => { cfg.steps = +b.dataset.v; saveD(); el.querySelectorAll('#lrSteps .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    async function load(){
+      if (!document.body.contains(el.querySelector('#lrImgs'))) return;
+      let s; try { s = await (await api('')).json(); } catch(e){ el.querySelector('#lrTrain').innerHTML = `<p class="lim">${esc(e.message)}</p>`; return; }
+      const H = {'X-GM-Token': S.macToken || ''};
+      el.querySelector('#lrImgs').innerHTML = s.images.map(f => `<div style="position:relative"><img data-f="${f}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;background:#0006"><button data-x="${f}" style="position:absolute;top:2px;right:2px;width:22px;height:22px;border-radius:50%;background:#000a;font-size:12px">✕</button></div>`).join('');
+      el.querySelectorAll('#lrImgs img[data-f]').forEach(async im => { try { const b = await (await api('/images/' + im.dataset.f)).blob(); im.src = URL.createObjectURL(b); } catch(e){} });
+      el.querySelectorAll('#lrImgs [data-x]').forEach(b => b.onclick = async () => { await api('/images/' + b.dataset.x, {method: 'DELETE'}); load(); });
+      const t = s.train, run = t && (t.state === 'running' || t.state === 'starting');
+      const pct = t?.total ? Math.min(100, (t.step || 0) / t.total * 100) : 0;
+      el.querySelector('#lrTrain').innerHTML = (run ? `<div class="vt-prog"><div class="bar"><i style="width:${pct}%"></i></div></div><p class="hint">${esc(t.msg || '')}${t.eta ? ' · เหลือประมาณ ' + fmtDur(t.eta) : ''}</p><button class="btn alt sm" id="lrStop">หยุดเทรน</button>`
+        : `${t?.state === 'error' ? `<p class="lim">${esc(t.msg)}</p>${t.tail ? `<details><summary class="hint">รายละเอียด</summary><pre style="white-space:pre-wrap;font-size:11px">${esc(t.tail.join('\n'))}</pre></details>` : ''}` : t ? `<p class="hint">${esc(t.msg || '')}</p>` : ''}
+           <p class="hint">${s.images.length} ภาพ${s.images.length < 15 ? ' — แนะนำ 15 ภาพขึ้นไป (ขั้นต่ำ 6)' : ' ✓'}${s.ready ? ' · มีโมเดลแล้ว เลือกใช้ได้ในหน้าสร้างภาพ' : ''}</p>
+           <button class="btn" id="lrGo" style="width:100%" ${s.images.length >= 6 ? '' : 'disabled'}>🧠 ${s.ready ? 'เทรนใหม่' : 'เริ่มเทรน'} บน Mac</button>`);
+      el.querySelector('#lrStop')?.addEventListener('click', async () => { await api('/stop', {method: 'POST'}); setTimeout(load, 1500); });
+      el.querySelector('#lrGo')?.addEventListener('click', async () => {
+        if (!cfg.label.trim()) return toast('ตั้งชื่อก่อน', true);
+        try { await MAC.form('/api/lora/' + cfg.id + '/train', {kind: cfg.kind, desc: cfg.desc, label: cfg.label, steps: cfg.steps}); toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); load(); } catch(e){ toast(e.message, true); }
+      });
+      clearTimeout(pollT);
+      if (run) pollT = setTimeout(load, 6000);
+      else if (t?.state === 'done'){ MAC.refresh(); LS.set('loraDraft', {}); }
+    }
+    el.querySelector('#lrIn').onchange = async e => {
+      const files = [...e.target.files]; if (!files.length) return;
+      toast(`กำลังอัปโหลด ${files.length} ภาพ…`);
+      for (let i = 0; i < files.length; i += 6){
+        const fd = new FormData(); files.slice(i, i + 6).forEach(f => fd.append('files', f, f.name));
+        try { await api('/images', {method: 'POST', body: fd}); } catch(err){ toast(err.message, true); break; }
+      }
+      e.target.value = ''; load();
+    };
+    load();
+  });
 }
 const EDIT_IDEAS = ['เปลี่ยนพื้นหลังเป็นชายหาดตอนพระอาทิตย์ตก', 'ให้คนในภาพใส่เสื้อสีแดง', 'เปลี่ยนเป็นตอนกลางคืน มีไฟนีออน', 'ทำให้เป็นสไตล์อนิเมะ', 'ลบคนออกจากภาพ'];
 function openEdit(div, url, prompt){
@@ -1465,11 +1563,12 @@ function openEdit(div, url, prompt){
     };
   });
 }
-async function renderShot(div, prompt, seed){
+async function renderShot(div, prompt, seed, final){
+  if (final) div._fp = final; final = div._fp || imgPrompt(prompt);
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาดบน Mac…</div>`;
   try {
     const [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
-    const r = await MAC.image(imgPrompt(prompt), w, h, seed);
+    const r = await MAC.image(final, w, h, seed);
     const url = URL.createObjectURL(r.blob);
     showShot(div, await loadImg(url), url, prompt);
     addHistory({kind:'image', prompt, blob: r.blob, lk: 'img-mac'});
@@ -1486,9 +1585,14 @@ $('#btnImg').onclick = async () => {
   const grid = $('#imgGrid'); grid.innerHTML = ''; grid.classList.toggle('one', S.imgCount === 1);
   const shots = Array.from({length: S.imgCount}, () => { const d = document.createElement('div'); d.className = 'shot'; d.innerHTML = '<div class="ld">รอคิว…</div>'; grid.appendChild(d); return d; });
   const seeds = shots.map(() => Math.floor(Math.random() * 1e9));
+  let final = imgPrompt(prompt);
+  if (S.imgEnhance){
+    $('#imgStatus').textContent = '✨ AI กำลังแต่งคำสั่งให้ละเอียดขึ้น…';
+    try { final = await enhancePrompt(prompt); } catch(e){ toast('แต่งคำสั่งไม่สำเร็จ ใช้คำสั่งเดิม: ' + e.message, true); }
+  }
   for (let i = 0; i < shots.length; i++){
     $('#imgStatus').textContent = `กำลังวาดภาพที่ ${i+1}/${shots.length} บน Mac`;
-    await renderShot(shots[i], prompt, seeds[i]);
+    await renderShot(shots[i], prompt, seeds[i], final);
   }
   $('#imgStatus').textContent = ''; renderEst(); renderQuota();
   btn.classList.remove('busy'); btn.disabled = false; imgBusy = false;

@@ -16,6 +16,7 @@ this Mac from anywhere; every remote call needs the pairing token.
 import asyncio
 import io
 import json
+import math
 import os
 import platform
 import random
@@ -844,7 +845,7 @@ def info(req: Request):
         "img_mode": img_mode(), "img_mode_set": CFG.get("img_mode") or "auto", "img_auto": auto_mode(),
         "img_modes": {k: v["name"] for k, v in IMG_MODES.items()},
         "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "mb", "total", "error")} for k, v in MODELS.items()},
-        "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
+        "loras": lora_list(), "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
         "speakers": my_speakers() + (kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()]),
         "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_kt_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
@@ -1010,6 +1011,19 @@ async def txt2img(req: Request):
     engine = IMG_MODES[mode]["engine"]
     if (RAM_GB or 8) < 14 and engine == "flux":   # FLUX 4-bit needs ~10GB — keep 8GB Macs safe
         mode, engine = "fast", "vega"
+    lora = Path(j.get("lora") or "").name
+    if lora and (LORAS / f"{lora}.safetensors").exists():
+        model_guard("klein")
+        t0 = time.time()
+
+        def run_lora():
+            sd = int(j.get("seed") or random.randint(1, 2**31 - 2))
+            W, H = fit_size(j.get("width"), j.get("height"), 1024 if (RAM_GB or 16) >= 16 else 768)
+            b = io.BytesIO()
+            gen_klein_lora(prompt, W, H, sd, lora, float(j.get("lora_scale") or 1.0)).save(b, format="PNG")
+            return b.getvalue(), sd
+        png, seed = await run_in_threadpool(busy, run_lora)
+        return Response(png, media_type="image/png", headers={"X-Seed": str(seed), "X-Ms": str(round((time.time() - t0) * 1000))})
     model_guard(engine)
     t0 = time.time()
     png, seed = await run_in_threadpool(busy, gen_image, prompt, j.get("width"), j.get("height"), j.get("seed"), engine, j.get("steps"), mode)
@@ -1240,12 +1254,19 @@ def get_esrgan():
 
 
 def job_upscale_img(jid, src, scale):
-    import numpy as np
-    import torch
-    from PIL import Image
     j = JOBS[jid]
     j.update(state="running", msg="กำลังขยายภาพด้วย AI (Real-ESRGAN)…", t0=time.time())
     with LOCK:
+        dst = esr_upscale(src, scale, j)
+    j.update(state="done", path=dst, mime="image/png", msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+
+
+def esr_upscale(src, scale, j=None):
+    import numpy as np
+    import torch
+    from PIL import Image
+    j = j if j is not None else {}
+    if True:
         model = get_esrgan()
         img = Image.open(src).convert("RGB")
         x = torch.from_numpy(np.asarray(img).astype("float32") / 255.0).permute(2, 0, 1)[None].to(torch_device())
@@ -1268,7 +1289,244 @@ def job_upscale_img(jid, src, scale):
             res = res.resize((W * 2, H * 2), Image.LANCZOS)
         dst = src + f".x{scale}.png"
         res.save(dst)
-    j.update(state="done", path=dst, mime="image/png", msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+    return dst
+
+
+# ---------------- hi-res: Real-ESRGAN x2, then a light FLUX.2 Klein img2img pass to re-draw fine detail ----------------
+def job_hires(jid, src, prompt):
+    from PIL import Image
+    j = JOBS[jid]
+    j.update(state="running", msg="ขั้นที่ 1/2: ขยายภาพ x2 (Real-ESRGAN)…", t0=time.time())
+    with LOCK:
+        up = esr_upscale(src, 2, j)
+        note = ""
+        if (RAM_GB or 8) >= 24 and prompt:
+            try:
+                j.update(msg="ขั้นที่ 2/2: เติมรายละเอียดด้วย FLUX.2 Klein…", step=0, total=0)
+                with Image.open(up) as im:
+                    w, h = im.size
+                s = min(1.0, 2048 / max(w, h))
+                W, H = int(w * s) // 16 * 16, int(h * s) // 16 * 16
+                path = ensure_model("klein")
+                out = Path(up).with_suffix(".hires.png")
+                mflux_cli("mflux-generate-flux2", ["--model", path, "--base-model", "flux2-klein-4b", "--prompt", prompt + ", highly detailed, sharp focus",
+                          "--image-path", up, "--image-strength", "0.3", "--width", str(W), "--height", str(H), "--steps", "4", "--seed", "7", "--output", str(out)])
+                up = str(out)
+            except Exception as e:  # noqa — the ESRGAN result is still a good 2x image
+                note = "ใช้ภาพขยาย (เติมรายละเอียดไม่สำเร็จ)"
+                print("[hires] refine failed:", e, flush=True)
+    j.update(state="done", path=up, mime="image/png", msg="เสร็จแล้ว" + (" · " + note if note else ""), ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/hires")
+async def hires(image: UploadFile = File(...), prompt: str = Form("")):
+    src = DATA / f"img-{secrets.token_hex(4)}.png"
+    src.write_bytes(await image.read())
+    jid = submit("hires", job_hires, (str(src), prompt.strip()), {"prompt": "ภาพคมชัด 2K"})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+# ---------------- LoRA: teach FLUX.2 Klein 4B a product / character / face / style from the user's own pictures ----------------
+LORA_DATA = DATA / "lora-data"
+LORAS = DATA / "loras"
+LORA_TRAIN = {}
+LORA_KINDS = {"product": "a product photo of {t}", "character": "an illustration of {t}", "person": "a photo of {t}", "style": "an image in {t} style"}
+
+
+def lora_dir(name):
+    n = re.sub(r"[^a-zA-Z0-9_-]+", "-", name or "my")[:30].strip("-").lower() or "my"
+    d = LORA_DATA / n
+    (d / "images").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def lora_list():
+    out = []
+    for m in sorted(LORAS.glob("*.json")) if LORAS.exists() else []:
+        try:
+            j = json.loads(m.read_text())
+            if (LORAS / f"{m.stem}.safetensors").exists():
+                out.append(j)
+        except Exception:  # noqa
+            pass
+    return out
+
+
+@app.get("/api/lora/{name}")
+def lora_status(name: str):
+    d = lora_dir(name)
+    meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
+    imgs = sorted(p.name for p in (d / "images").glob("*.png"))
+    t = {k: v for k, v in (LORA_TRAIN.get(d.name) or {}).items() if k != "proc"} or None
+    return {"name": d.name, "images": imgs, "meta": meta, "train": t, "ready": (LORAS / f"{d.name}.safetensors").exists()}
+
+
+@app.post("/api/lora/{name}/images")
+async def lora_images(name: str, files: list[UploadFile] = File(...)):
+    from PIL import Image, ImageOps
+    d = lora_dir(name)
+    n = 0
+    for f in files:
+        try:
+            im = ImageOps.exif_transpose(Image.open(io.BytesIO(await f.read()))).convert("RGB")
+            s = min(1.0, 1024 / max(im.size))
+            if s < 1:
+                im = im.resize((int(im.width * s), int(im.height * s)), Image.LANCZOS)
+            im.save(d / "images" / f"{secrets.token_hex(4)}.png")
+            n += 1
+        except Exception:  # noqa
+            pass
+    return {"added": n, "count": len(list((d / "images").glob("*.png")))}
+
+
+@app.delete("/api/lora/{name}/images/{fn}")
+def lora_image_del(name: str, fn: str):
+    (lora_dir(name) / "images" / Path(fn).name).unlink(missing_ok=True)
+    return {"ok": True}
+
+
+@app.get("/api/lora/{name}/images/{fn}")
+def lora_image_get(name: str, fn: str):
+    return FileResponse(lora_dir(name) / "images" / Path(fn).name, media_type="image/png")
+
+
+def lora_train_worker(name, kind, desc, label, steps):
+    d = lora_dir(name)
+    t = LORA_TRAIN[d.name]
+    imgs = sorted((d / "images").glob("*.png"))
+    trig = "gm" + d.name.replace("-", "")
+    cap = LORA_KINDS.get(kind, LORA_KINDS["product"]).format(t=trig) + (", " + desc if desc else "")
+    data = d / "data"
+    shutil.rmtree(data, ignore_errors=True)
+    data.mkdir()
+    for p in imgs:   # mflux reads a sibling .txt caption per image
+        shutil.copy(p, data / p.name)
+        (data / (p.stem + ".txt")).write_text(cap)
+    epochs = max(4, math.ceil(steps / max(1, len(imgs))))
+    out = d / "train"
+    tgt = [{"module_path": f"transformer_blocks.{{block}}.attn.{m}", "blocks": {"start": 0, "end": 5}, "rank": 16} for m in ("to_q", "to_k", "to_v")]
+    cfg = {"model": "flux2-klein-base-4b", "data": str(data), "seed": 42, "steps": 20, "guidance": 1.0,
+           "quantize": 8 if (RAM_GB or 16) >= 24 else 4, "low_ram": (RAM_GB or 16) < 24, "gradient_checkpointing": True, "max_resolution": 768 if (RAM_GB or 16) < 24 else 1024,
+           "training_loop": {"num_epochs": epochs, "batch_size": 1, "timestep_low": 0, "timestep_high": 20},
+           "optimizer": {"name": "AdamW", "learning_rate": 1e-4},
+           "checkpoint": {"output_path": str(out), "save_frequency": max(50, steps // 6)},
+           "monitoring": {"plot_frequency": 10 ** 6, "generate_image_frequency": 10 ** 6},
+           "lora_layers": {"targets": tgt}}
+    (d / "train.json").write_text(json.dumps(cfg, indent=1))
+    meta = {"name": d.name, "label": label or d.name, "trigger": trig, "kind": kind, "caption": cap, "images": len(imgs)}
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+    py = ensure_tool("img")
+    env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1")
+    t.update(state="running", msg="กำลังเตรียม… (ครั้งแรกดาวน์โหลดโมเดลฐาน FLUX.2 Klein Base 4B หลาย GB)", started=time.time(), total=epochs * len(imgs))
+    p = subprocess.Popen([str(py.parent / "mflux-train"), "--config", str(d / "train.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d))
+    t["proc"] = p
+    try:
+        subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa
+        pass
+    log = open(d / "train.log", "ab")
+    buf, tail = b"", []
+    while True:
+        ch = p.stdout.read(1)
+        if not ch:
+            break
+        log.write(ch)
+        if ch in (b"\r", b"\n"):
+            line = buf.decode(errors="ignore").strip()
+            buf = b""
+            if not line:
+                continue
+            tail = (tail + [line])[-30:]
+            mm = re.search(r"(\d+)\s*/\s*(\d+)\s*\[", line) or re.search(r"[Ss]tep\D{0,3}(\d+)\s*/\s*(\d+)", line)
+            if mm:
+                t["step"], t["total"] = int(mm.group(1)), int(mm.group(2))
+                el = time.time() - t["started"]
+                if t["step"] > 3:
+                    t["eta"] = round(el / t["step"] * (t["total"] - t["step"]))
+                t["msg"] = f"กำลังเทรน {t['step']}/{t['total']}"
+            elif "ownload" in line or "Fetching" in line:
+                t["msg"] = "กำลังดาวน์โหลดโมเดลฐาน… " + line[-60:]
+        else:
+            buf += ch
+    p.wait()
+    log.close()
+    t.pop("proc", None)
+    t["tail"] = tail[-10:]
+    ok = lora_export(d.name)
+    if t.get("stop"):
+        t.update(state="stopped", msg="หยุดแล้ว" + (" — ใช้ผลล่าสุดได้" if ok else ""))
+    elif ok:
+        t.update(state="done", msg="เทรนเสร็จแล้ว 🎉 เลือกใช้ได้ในหน้าสร้างภาพ")
+    else:
+        t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
+
+
+def lora_export(name):
+    """Take the newest LoRA weights the trainer wrote (zip checkpoint or .safetensors) → loras/<name>.safetensors"""
+    import glob
+    import zipfile
+    d = lora_dir(name)
+    cands = [p for p in glob.glob(str(d / "train" / "**" / "*"), recursive=True) if p.endswith((".zip", ".safetensors"))]
+    if not cands:
+        return False
+    newest = max(cands, key=os.path.getmtime)
+    LORAS.mkdir(parents=True, exist_ok=True)
+    dst = LORAS / f"{d.name}.safetensors"
+    if newest.endswith(".zip"):
+        with zipfile.ZipFile(newest) as z:
+            st = [n for n in z.namelist() if n.endswith(".safetensors")]
+            if not st:
+                return False
+            pick = next((n for n in st if "adapter" in n.lower() or "lora" in n.lower()), st[0])
+            dst.write_bytes(z.read(pick))
+    else:
+        shutil.copy(newest, dst)
+    meta = json.loads((d / "meta.json").read_text())
+    meta["t"] = int(time.time())
+    (LORAS / f"{d.name}.json").write_text(json.dumps(meta, ensure_ascii=False))
+    return True
+
+
+@app.post("/api/lora/{name}/train")
+def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200)):
+    d = lora_dir(name)
+    if (LORA_TRAIN.get(d.name) or {}).get("state") == "running":
+        raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
+    n = len(list((d / "images").glob("*.png")))
+    if n < 6:
+        raise HTTPException(400, f"ภาพน้อยเกินไป ({n}) — ต้องมีอย่างน้อย 6 ภาพ (แนะนำ 15–40)")
+    LORA_TRAIN[d.name] = {"state": "starting", "msg": "กำลังเริ่ม…", "step": 0}
+    threading.Thread(target=lambda: _safe(lora_train_worker, d.name, kind, desc.strip()[:200], label.strip()[:40], int(steps)), daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/lora/{name}/stop")
+def lora_stop(name: str):
+    t = LORA_TRAIN.get(lora_dir(name).name) or {}
+    if t.get("proc"):
+        t["stop"] = True
+        t["proc"].terminate()
+    return {"ok": True}
+
+
+@app.delete("/api/lora/{name}")
+def lora_delete(name: str):
+    d = lora_dir(name)
+    for f in (LORAS / f"{d.name}.safetensors", LORAS / f"{d.name}.json"):
+        f.unlink(missing_ok=True)
+    shutil.rmtree(d, ignore_errors=True)
+    return {"ok": True}
+
+
+def gen_klein_lora(prompt, W, H, seed, lora, scale=1.0):
+    meta = json.loads((LORAS / f"{lora}.json").read_text())
+    path = ensure_model("klein")
+    out = Path(tempfile.mkdtemp(prefix="gm-lora-")) / "out.png"
+    p = prompt if meta["trigger"] in prompt else f"{meta['caption']}, {prompt}"
+    mflux_cli("mflux-generate-flux2", ["--model", path, "--base-model", "flux2-klein-4b", "--prompt", p, "--lora-paths", str(LORAS / f"{lora}.safetensors"),
+              "--lora-scales", str(scale), "--width", str(W), "--height", str(H), "--seed", str(seed), "--steps", "4", "--output", str(out)])
+    from PIL import Image
+    return Image.open(out)
 
 
 @app.post("/api/upscale_img")
