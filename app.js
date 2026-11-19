@@ -134,6 +134,7 @@ const PAGES = {
   clone:['My Voice','อ่านข้อความเป็นเสียงของคุณเอง (บน Mac)'],
   image:['Text to Image','สร้างภาพบน Mac ของคุณ · ไม่มีลายน้ำ'],
   cover:['Cover / Live','แกะคอร์ด → เล่นใหม่แบบร้านดนตรีสด'],
+  video:['Text to Video','สร้างคลิปจากข้อความบน GPU ของ Mac'],
 };
 function go(p){
   $$('.page').forEach(s => s.classList.toggle('on', s.dataset.page === p));
@@ -291,6 +292,7 @@ const LIC = {
   local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS/VITS (CC-BY-NC)'},
   mac: {ok:true, t:'เชิงพาณิชย์ได้ — KhanomTan TTS v1.1 (Apache-2.0) บน Mac'},
   clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + OpenVoice V2 (MIT) บน Mac'},
+  'video-mac': {ok:true, t:'เชิงพาณิชย์ได้ — Wan2.1 T2V 1.3B (Apache-2.0) บน Mac'},
   cover: {ok:null, t:'ดนตรีบันทึกใหม่ของคุณ — แต่ทำนอง/เนื้อร้องเป็นลิขสิทธิ์ผู้แต่ง (ต้องขออนุญาตก่อนใช้เชิงพาณิชย์)'},
   'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
   // keys kept so projects made with earlier versions still show their licence
@@ -1039,11 +1041,11 @@ $('#dkHist').onclick = () => openHistory();
 async function openHistory(){
   const items = (await db.all('history')).sort((a, b) => b.created - a.created);
   const when = t => new Date(t).toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
-  const ic = {tts:'i-vol', audio:'i-down', image:'i-image'};
+  const ic = {tts:'i-vol', audio:'i-down', image:'i-image', video:'i-image'};
   let h = sheetHead('ประวัติการใช้งาน');
   h += items.length ? items.map(it => `<div class="item" data-id="${it.id}">
       ${it.kind === 'image' ? `<img src="${esc(it.url || (it.blob ? URL.createObjectURL(it.blob) : ''))}" alt="" loading="lazy">` : `<span class="ib"><svg class="i"><use href="#${ic[it.kind]}"/></svg></span>`}
-      <div class="t"><b>${esc((it.text || it.prompt || '').slice(0, 80))}</b><small>${when(it.created)} · ${it.kind === 'image' ? 'ภาพ' : esc(it.voice || '')}${it.kind === 'audio' ? ' · มีไฟล์เสียง' : ''}</small></div>
+      <div class="t"><b>${esc((it.text || it.prompt || '').slice(0, 80))}</b><small>${when(it.created)} · ${it.kind === 'image' ? 'ภาพ' : it.kind === 'video' ? 'วิดีโอ' : esc(it.voice || '')}${it.kind === 'audio' ? ' · มีไฟล์เสียง' : ''}</small></div>
       ${it.blob ? `<button class="ib" data-sh aria-label="แชร์ / Google Drive"><svg class="i"><use href="#i-share"/></svg></button><button class="ib" data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>` : ''}
       <button class="ib" data-open aria-label="เปิด"><svg class="i"><use href="#i-refresh"/></svg></button>
       <button class="ib" data-del aria-label="ลบ"><svg class="i"><use href="#i-trash"/></svg></button></div>`).join('') + `<button class="btn danger sm" style="margin-top:14px" id="hClear">ล้างประวัติทั้งหมด</button>`
@@ -1055,8 +1057,8 @@ async function openHistory(){
         if (it.kind === 'image'){ $('#imgPrompt').value = it.prompt; go('image'); }
         else { go('tts'); putText(it.text, ''); }
       };
-      row.querySelector('[data-dl]')?.addEventListener('click', () => { const f = asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : 'genmedi-voice'); saveBlob(f, f.name); });
-      row.querySelector('[data-sh]')?.addEventListener('click', () => shareFiles([asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : 'genmedi-voice')], (it.text || it.prompt || '').slice(0, 80)));
+      row.querySelector('[data-dl]')?.addEventListener('click', () => { const f = asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : it.kind === 'video' ? 'genmedi-video' : 'genmedi-voice'); saveBlob(f, f.name); });
+      row.querySelector('[data-sh]')?.addEventListener('click', () => shareFiles([asFile(it.blob, it.kind === 'image' ? 'genmedi-image' : it.kind === 'video' ? 'genmedi-video' : 'genmedi-voice')], (it.text || it.prompt || '').slice(0, 80)));
       row.querySelector('[data-del]').onclick = async () => { await db.del('history', it.id); row.remove(); };
     });
     el.querySelector('#hClear')?.addEventListener('click', async () => { await db.clear('history'); openHistory(); });

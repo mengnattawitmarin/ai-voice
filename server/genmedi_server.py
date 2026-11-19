@@ -124,6 +124,7 @@ MODELS = {
     "tts": {"name": "เสียงพากย์ KhanomTan", "repo": KT_REPO, "allow": ["best_model.pth", "config.json", "config_se.json", "language_ids.json", "model_se.pth", "speakers.pth"], "state": "idle", "pct": 0},
     "voice": {"name": "โคลนเสียง OpenVoice V2", "repo": "myshell-ai/OpenVoiceV2", "allow": ["converter/*"], "state": "idle", "pct": 0},
     "flux": {"name": "ภาพ FLUX.1-schnell (4-bit)", "repo": FLUX_REPO, "allow": None, "state": "idle", "pct": 0},
+    "video": {"name": "วิดีโอ Wan2.1 T2V 1.3B", "repo": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "allow": None, "state": "idle", "pct": 0},
     "vega": {"name": "ภาพ Segmind-Vega (เร็ว)", "repo": VEGA_REPO, "allow": ["*.json", "*fp16*.safetensors", "tokenizer*/*", "*.txt"], "state": "idle", "pct": 0},
 }
 
@@ -361,6 +362,77 @@ def gen_image(prompt, w, h, seed, engine, steps=None, mode=None):
     return b.getvalue(), seed
 
 
+# ---------------- text → video: Wan2.1 T2V 1.3B (Apache-2.0) on the Mac GPU ----------------
+_wan = None
+VIDEO_MODES = {   # Wan needs 4k+1 frames; 16 fps
+    "draft":    {"w": 480, "h": 272, "steps": 15, "name": "ร่างเร็ว 480×272"},
+    "standard": {"w": 832, "h": 480, "steps": 25, "name": "มาตรฐาน 480p (832×480)"},
+}
+JOBS = {}
+
+
+def get_wan():
+    global _wan
+    if _wan is None:
+        import torch
+        from diffusers import AutoencoderKLWan, WanPipeline
+        path = ensure_model("video")
+        dev = torch_device()
+        vae = AutoencoderKLWan.from_pretrained(path, subfolder="vae", torch_dtype=torch.float32)
+        pipe = WanPipeline.from_pretrained(path, vae=vae, torch_dtype=torch.bfloat16 if dev != "cpu" else torch.float32)
+        if (RAM_GB or 16) < 24:
+            try:
+                pipe.enable_model_cpu_offload(device=dev)
+            except Exception:
+                pipe = pipe.to(dev)
+        else:
+            pipe = pipe.to(dev)
+        pipe.set_progress_bar_config(disable=True)
+        _wan = pipe
+    return _wan
+
+
+def run_video_job(jid, prompt, mode, seconds, portrait, seed):
+    import torch
+    from diffusers.utils import export_to_video
+    j = JOBS[jid]
+    md = VIDEO_MODES.get(mode, VIDEO_MODES["standard"])
+    w, h = (md["h"], md["w"]) if portrait else (md["w"], md["h"])
+    frames = int(max(1, round(seconds * 16 / 4)) * 4 + 1)
+    j.update(state="loading", msg="กำลังโหลดโมเดลวิดีโอ (ครั้งแรกนานหน่อย)…", total=md["steps"])
+    try:
+        with LOCK:
+            pipe = get_wan()
+            j.update(state="running", msg="กำลังสร้างวิดีโอบน GPU…", t0=time.time())
+
+            def cb(p, i, t, kw):
+                j["step"] = i + 1
+                el = time.time() - j["t0"]
+                j["eta"] = round(el / (i + 1) * (md["steps"] - i - 1) + 20)
+                if j.get("cancel"):
+                    raise RuntimeError("ยกเลิกแล้ว")
+                return kw
+
+            g = torch.Generator("cpu").manual_seed(int(seed))
+            out = pipe(prompt=prompt,
+                       negative_prompt="blurry, low quality, distorted, watermark, text, static, worst quality, deformed",
+                       height=h, width=w, num_frames=frames, guidance_scale=5.0, num_inference_steps=md["steps"],
+                       generator=g, callback_on_step_end=cb).frames[0]
+            j.update(msg="กำลังเข้ารหัส MP4…")
+            raw = str(DATA / f"video-{jid}-raw.mp4")
+            export_to_video(out, raw, fps=16)
+            final = str(DATA / f"video-{jid}.mp4")
+            r = subprocess.run([ffmpeg_bin(), "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", final], capture_output=True)
+            if r.returncode != 0:
+                final = raw
+        ms = round((time.time() - j["t0"]) * 1000)
+        STATS[f"video_ms_{mode}_{frames}"] = ms
+        STATS[f"video_ms_per_step_{mode}"] = round(ms / md["steps"])
+        j.update(state="done", path=final, msg="เสร็จแล้ว", ms=ms, seed=seed)
+    except Exception as e:  # noqa
+        j.update(state="error", msg=str(e)[:400])
+
+
 # ---------------- files ----------------
 def ffmpeg_bin():
     for c in (BIN / "ffmpeg", shutil.which("ffmpeg")):
@@ -480,7 +552,8 @@ def info(req: Request):
         "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
         "speakers": kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()],
-        "voices": [p.stem for p in VOICES.glob("*.wav")], **STATS,
+        "voices": [p.stem for p in VOICES.glob("*.wav")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
+        "video_ok": (RAM_GB or 16) >= 16, **STATS,
     }
 
 
@@ -651,6 +724,48 @@ async def transcode(file: UploadFile = File(...)):
     if r.returncode != 0:
         raise HTTPException(500, "ffmpeg: " + r.stderr[-300:])
     return FileResponse(out, media_type="video/mp4", filename="genmedi.mp4")
+
+
+@app.post("/api/txt2video")
+async def txt2video(req: Request):
+    j = await req.json()
+    prompt = (j.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "missing prompt")
+    if (RAM_GB or 16) < 16:
+        raise HTTPException(400, "วิดีโอต้องใช้ Mac ที่มี RAM 16GB ขึ้นไป")
+    if any(x["state"] in ("queued", "loading", "running") for x in JOBS.values()):
+        raise HTTPException(409, "กำลังสร้างวิดีโออื่นอยู่ — รอให้เสร็จก่อน")
+    if MODELS["video"]["state"] != "ready":
+        model_guard("video")
+    jid = secrets.token_hex(4)
+    seed = j.get("seed") or random.randint(1, 2**31 - 2)
+    JOBS[jid] = {"id": jid, "state": "queued", "step": 0, "total": 0, "eta": None, "msg": "รอคิว", "prompt": prompt, "created": time.time()}
+    threading.Thread(target=run_video_job, args=(jid, prompt, j.get("mode") or "standard", float(j.get("seconds") or 3), bool(j.get("portrait")), seed), daemon=True).start()
+    return {"job": jid}
+
+
+@app.get("/api/jobs/{jid}")
+def job(jid: str):
+    j = JOBS.get(jid)
+    if not j:
+        raise HTTPException(404, "ไม่พบงานนี้ (Mac อาจเพิ่งรีสตาร์ท)")
+    return {k: v for k, v in j.items() if k not in ("path", "t0")}
+
+
+@app.post("/api/jobs/{jid}/cancel")
+def job_cancel(jid: str):
+    if jid in JOBS:
+        JOBS[jid]["cancel"] = True
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{jid}/result")
+def job_result(jid: str):
+    j = JOBS.get(jid)
+    if not j or j.get("state") != "done":
+        raise HTTPException(404, "ยังไม่เสร็จ")
+    return FileResponse(j["path"], media_type="video/mp4", filename="genmedi-video.mp4")
 
 
 # web app (same files as the GitHub Pages site)

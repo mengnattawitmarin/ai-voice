@@ -19,6 +19,8 @@ sentencepiece
 qrcode
 psutil
 imageio-ffmpeg
+imageio
+ftfy
 # OpenVoice V2 runtime deps (OpenVoice itself is installed with --no-deps)
 unidecode
 eng_to_ipa
