@@ -11,7 +11,7 @@ jobs:
       - name: install
         run: |
           python -m pip install -U pip
-          pip install "coqui-tts" huggingface_hub soundfile "mflux==0.6.2" 2>&1 | tail -5
+          pip install "coqui-tts" torchaudio huggingface_hub soundfile "mflux==0.6.2" 2>&1 | tail -5
           pip list 2>/dev/null | grep -iE "torch|coqui|mflux|mlx|transformers" || true
       - name: khanomtan files
         run: |
@@ -39,7 +39,7 @@ jobs:
           def fix(o):
               if isinstance(o, dict):
                   for k, v in o.items():
-                      if isinstance(v, str) and (v.endswith(".pth") or v.endswith(".json")) and ("/" in v):
+                      if isinstance(v, str) and (v.endswith(".pth") or v.endswith(".json")):
                           o[k] = str(Path("kt").resolve() / Path(v).name)
                       else: fix(v)
               elif isinstance(o, list):
