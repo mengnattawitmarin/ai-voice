@@ -503,6 +503,8 @@ def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None):
         STATS[f"video_ms_{mode}_{frames}"] = ms
         STATS[f"video_ms_per_step_{mode}"] = round(ms / md["steps"])
         j.update(state="done", path=final, msg="เสร็จแล้ว", ms=ms, seed=seed)
+        if final != raw:
+            Path(raw).unlink(missing_ok=True)
     except Exception as e:  # noqa
         j.update(state="error", msg=str(e)[:400])
 
@@ -847,8 +849,20 @@ if WEB.exists():
     app.mount("/", StaticFiles(directory=str(WEB), html=True), name="web")
 
 
+def cleanup_old_videos(days=2):
+    """Generated clips are also saved to the user's folder — drop server-side copies after a while."""
+    cut = time.time() - days * 86400
+    for f in DATA.glob("video-*.mp4"):
+        try:
+            if f.stat().st_mtime < cut:
+                f.unlink()
+        except OSError:
+            pass
+
+
 if __name__ == "__main__":
     import uvicorn
+    cleanup_old_videos()
     print(f"Gen Medi {VERSION} · {CHIP} · RAM {RAM_GB} GB · web {WEB}", flush=True)
     start_tunnel()
     prefetch(["tts", "voice", default_image_engine()])

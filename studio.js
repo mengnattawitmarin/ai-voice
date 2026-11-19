@@ -418,7 +418,13 @@ function openAuto(){
       P.format = fmt; P.title = el.querySelector('#auTitle').value.trim();
       const start = P.scenes.length; parts.forEach(t => P.scenes.push(newScene(t))); touch(); render();
       const steps = el.querySelector('#auSteps'), prog = el.querySelector('#auProg'), go = el.querySelector('#auGo'); go.disabled = true; go.classList.add('busy');
-      const withImg = el.querySelector('#auImg').checked, total = parts.length * (withImg ? 2 : 1); let done = 0, fails = 0;
+      let withImg = el.querySelector('#auImg').checked;
+      if ((withImg || vv.type === 'mac' || vv.type === 'clone') && !GM.MAC.on){
+        if (vv.type === 'mac' || vv.type === 'clone'){ P.scenes.splice(start); render(); go.disabled = false; go.classList.remove('busy'); toast('เสียงที่เลือกต้องใช้ Mac — เชื่อม Mac ก่อน หรือเปลี่ยนเป็นเสียง AI ฟรีในมือถือ', true); GM.openProc(); return; }
+        if (!confirm('ยังไม่ได้เชื่อม Mac จึงสร้างภาพ AI ไม่ได้ — สร้างต่อโดยใช้พื้นหลังสีแทนไหม? (ใส่ภาพเองทีหลังได้)')){ P.scenes.splice(start); render(); go.disabled = false; go.classList.remove('busy'); return; }
+        withImg = false;
+      }
+      const total = parts.length * (withImg ? 2 : 1); let done = 0, fails = 0;
       const step = (msg, cls) => { const li = document.createElement('li'); li.className = cls || 'run'; li.textContent = msg; steps.appendChild(li); li.scrollIntoView({ block: 'nearest' }); return li; };
       for (let k = 0; k < parts.length; k++){
         const i = start + k;
