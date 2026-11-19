@@ -19,7 +19,9 @@ jobs:
         run: |
           set -e
           mkdir -p dl
-          url=$(gh api repos/astral-sh/python-build-standalone/releases/latest --jq '.assets[].browser_download_url' | grep -E 'cpython-3\.11\.[0-9]+\+[0-9]+-aarch64-apple-darwin-install_only\.tar\.gz$' | head -1)
+          rid=$(gh api repos/astral-sh/python-build-standalone/releases/latest --jq '.id')
+          url=$(gh api --paginate "repos/astral-sh/python-build-standalone/releases/$rid/assets?per_page=100" --jq '.[].browser_download_url' | grep -E 'cpython-3\.11\.[0-9]+\+[0-9]+-aarch64-apple-darwin-install_only(_stripped)?\.tar\.gz$' | sort | tail -1)
+          [ -n "$url" ] || { echo "no python asset"; exit 1; }
           echo "python: $url"; curl -sSL "$url" -o dl/python.tgz
           curl -sSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz -o dl/cf.tgz
       - name: Build Gen Medi.app
