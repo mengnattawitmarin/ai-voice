@@ -281,7 +281,7 @@ function pause(){ player.playing = false; cancelAnimationFrame(player.raf); try 
 async function makeVoice(i, quiet){
   const s = P.scenes[i]; if (!s.text.trim()) { if (!quiet) toast('พิมพ์ข้อความของฉากก่อน'); return false; }
   const v = GM.curVoice();
-  if (v.type === 'device') throw new Error('เสียงระบบในเครื่องสร้างไฟล์ไม่ได้ — เลือกเสียง Google/Azure, เสียง AI ฟรี หรือเสียงโคลน');
+  if (v.type === 'device') throw new Error('เสียงระบบในเครื่องสร้างไฟล์ไม่ได้ — เลือกเสียงบน Mac, เสียง AI ฟรี หรือเสียงโคลน');
   const parts = GM.makeChunks(s.text, v.type === 'local' ? 140 : 380), blobs = [];
   for (const t of parts) blobs.push(await GM.synthesize(v, t));
   s.audio = blobs.length === 1 ? blobs[0] : await GM.mergeAudio(blobs); s.audLk = GM.voiceLicKey(v); s.voice = v.name;
@@ -412,7 +412,7 @@ function openAuto(){
     el.querySelector('#auVoice').onclick = () => { closeAll(); setTimeout(() => document.querySelector('#btnVoice').click(), 250); };
     el.querySelector('#auGo').onclick = async () => {
       const text = el.querySelector('#auScript').value.trim(); if (!text) return toast('วางบทก่อนนะ');
-      const vv = GM.curVoice(); if (vv.type === 'device') return toast('เลือกเสียงที่สร้างไฟล์ได้ (Google/Azure/เสียง AI ฟรี/โคลน) ก่อน', true);
+      const vv = GM.curVoice(); if (vv.type === 'device') return toast('เลือกเสียงที่สร้างไฟล์ได้ (เสียงบน Mac/เสียง AI ฟรี/โคลน) ก่อน', true);
       const parts = splitScript(text); if (parts.length > 40 && !confirmLong(parts.length)) return;
       if (!el.querySelector('#auAppend').checked || !P){ P = newProj(el.querySelector('#auTitle').value.trim() || parts[0].slice(0, 40)); }
       P.format = fmt; P.title = el.querySelector('#auTitle').value.trim();
@@ -500,7 +500,7 @@ async function encodeWebCodecs(cv, ctx, W, H, tl, N, mix, onProg){
   if (vcodec !== 'avc') notes.push('วิดีโอเป็น VP9 (เครื่องนี้ไม่มี H.264)');
   if (acodec === 'opus') notes.push('เสียงเป็น Opus');
   if (!acodec) notes.push('ไม่มีเสียง (เบราว์เซอร์นี้เข้ารหัสเสียงไม่ได้)');
-  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', audio: acodec, vcodec, note: notes.length ? notes.join(' · ') + ' — บางแพลตฟอร์มอาจไม่รับ แนะนำแปลงผ่าน “คอมของฉัน” หรือใช้ Chrome บน Android/Mac' : '' };
+  return { blob: new Blob([muxer.target.buffer], { type: 'video/mp4' }), ext: 'mp4', audio: acodec, vcodec, note: notes.length ? notes.join(' · ') + ' — บางแพลตฟอร์มอาจไม่รับ แนะนำแปลงผ่าน Mac (Gen Medi for Mac) หรือใช้ Chrome บน Android/Mac' : '' };
 }
 async function encodeRecorder(cv, ctx, W, H, tl, mix, onProg){
   const types = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
@@ -516,7 +516,7 @@ async function encodeRecorder(cv, ctx, W, H, tl, mix, onProg){
   rec.stop(); await done; ac.close();
   const ext = mime.includes('mp4') ? 'mp4' : 'webm', avc = mime.includes('avc1');
   return { blob: new Blob(parts, { type: mime.split(';')[0] }), ext, vcodec: avc ? 'avc' : 'other', audio: avc ? 'mp4a.40.2' : 'opus',
-    note: avc ? '' : (ext === 'webm' ? 'ได้ไฟล์ WebM' : 'ไฟล์ MP4 แต่ codec ไม่ใช่ H.264') + ' — TikTok/IG บางครั้งไม่รับ แนะนำแปลงผ่าน “คอมของฉัน”' };
+    note: avc ? '' : (ext === 'webm' ? 'ได้ไฟล์ WebM' : 'ไฟล์ MP4 แต่ codec ไม่ใช่ H.264') + ' — TikTok/IG บางครั้งไม่รับ แนะนำแปลงผ่าน Mac (Gen Medi for Mac)' };
 }
 function buildSrt(){
   const tl = timeline(), cv = document.createElement('canvas').getContext('2d'), [W, H] = FORMATS[P.format]; let n = 0;
@@ -539,10 +539,8 @@ async function audioExport(kind){
   out.push(enc.flush()); return { blob: new Blob(out, { type: 'audio/mpeg' }), ext: 'mp3' };
 }
 async function transcodeOnMac(blob){
-  const g = await GM.gconnect(S.serverUrl);
-  const r = await g.client.predict('/transcode', [GM.gradio().handle_file(new File([blob], 'in.' + (blob.type.includes('webm') ? 'webm' : 'mp4'), { type: blob.type }))]);
-  const url = typeof r.data[0] === 'string' ? r.data[0] : r.data[0]?.url; if (!url) throw new Error('คอมไม่ได้ส่งไฟล์กลับ');
-  return (await fetch(url)).blob();
+  const r = await GM.MAC.form('/api/transcode', { file: new File([blob], 'in.' + (blob.type.includes('webm') ? 'webm' : 'mp4'), { type: blob.type }) });
+  return r.blob();
 }
 function openExport(){
   if (!P || !P.scenes.length) return toast('ยังไม่มีฉาก — สร้างวิดีโอก่อน', true);
@@ -577,9 +575,9 @@ function openExport(){
         else {
           let [W, H] = sel.size || FORMATS[sel.f]; if (q === '720'){ const k = 720 / Math.min(W, H); W = Math.round(W * k / 2) * 2; H = Math.round(H * k / 2) * 2; }
           r = await renderVideo(W, H, (p, m) => { prog.style.width = (p * 100) + '%'; msg.textContent = m; });
-          if ((r.ext === 'webm' || r.audio === 'opus' || (r.vcodec && r.vcodec !== 'avc')) && S.serverUrl){
-            msg.textContent = 'กำลังแปลงเป็น MP4 (H.264 + AAC) บนคอมของฉัน…';
-            try { r = { blob: await transcodeOnMac(r.blob), ext: 'mp4', note: '' }; } catch(e){ r.note += ' (แปลงบนคอมไม่สำเร็จ: ' + e.message + ')'; }
+          if ((r.ext === 'webm' || r.audio === 'opus' || (r.vcodec && r.vcodec !== 'avc')) && GM.MAC.on){
+            msg.textContent = 'กำลังแปลงเป็น MP4 (H.264 + AAC) บน Mac…';
+            try { r = { blob: await transcodeOnMac(r.blob), ext: 'mp4', note: '' }; } catch(e){ r.note += ' (แปลงบน Mac ไม่สำเร็จ: ' + e.message + ')'; }
           }
         }
         prog.style.width = '100%';

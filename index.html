@@ -61,7 +61,7 @@
   <header class="hdr">
     <button class="menu" id="btnMenu" aria-label="เมนู"><svg class="i"><use href="#i-menu"/></svg></button>
     <div class="ttl"><h1 id="pageTitle"><img id="hdrLogo" src="logo.svg" alt="" hidden><span id="pageTitleTxt">Text to Speech</span></h1><p id="pageSub">เปลี่ยนข้อความเป็นเสียงพูดคุณภาพสูง</p></div>
-    <button class="pro" id="btnPro"><svg class="i"><use href="#i-crown"/></svg><span>อัปเกรดโปร</span></button>
+    <button class="pro" id="btnPro"><svg class="i"><use href="#i-crown"/></svg><span>Mac</span></button>
     <button class="avatar" id="btnAvatar" aria-label="ตั้งค่า"><svg class="i"><use href="#i-user"/></svg></button>
     <canvas id="wave"></canvas>
   </header>
@@ -89,7 +89,7 @@
     </div>
     <div class="card" id="homeProjects"><div class="card-h"><h2>🎞️ โปรเจกต์ล่าสุด</h2><button class="ghost" id="homeNewProj">＋ ใหม่</button></div><div id="homeProjList"><p class="hint">ยังไม่มีโปรเจกต์ — กด “บท → วิดีโอ” หรือ “ตัดต่อวิดีโอ” เพื่อเริ่ม</p></div></div>
     <div class="row2" style="margin-bottom:14px">
-      <button class="btn alt" style="flex:1" data-home="proc">⚙️ ประมวลผล & คีย์</button>
+      <button class="btn alt" style="flex:1" data-home="proc">💻 เชื่อมต่อ Mac</button>
       <button class="btn alt" style="flex:1" data-home="about">📖 ทำอะไรได้ / ข้อจำกัด</button>
     </div>
   </section>
@@ -181,10 +181,9 @@
   <!-- ============ CLONE PAGE ============ -->
   <section class="page" data-page="clone">
     <div class="card">
-      <div class="card-h"><h2><svg class="i"><use href="#i-sliders"/></svg>ประมวลผลที่</h2></div>
-      <div class="chips" id="cloneEngine"></div>
+      <div class="card-h"><h2><svg class="i"><use href="#i-sliders"/></svg>เสียงของฉัน 💼</h2></div>
+      <p class="hint" style="margin-top:0">อัดเสียงตัวเอง 10 วินาที → Mac จะอ่านข้อความเป็นเสียงคุณ (KhanomTan Apache-2.0 → OpenVoice MIT) ใช้หารายได้ได้ · ประมวลผลบน Mac ไม่ใช้ API ภายนอก</p>
       <p class="hint" id="cloneEst"></p>
-      <div id="cloneBaseBox" hidden><label class="lbl2">เสียงต้นทาง (💼 ลิขสิทธิ์ถูกต้อง) → OpenVoice จะเปลี่ยนเป็นเสียงของคุณ</label><select class="inp" id="cloneBase"></select></div>
     </div>
     <div class="card">
       <div class="card-h"><h2><svg class="i"><use href="#i-mic"/></svg>1. อัดหรืออัปโหลดเสียงต้นแบบ</h2></div>
@@ -200,19 +199,19 @@
       <audio id="clonePreview" controls hidden></audio>
     </div>
     <div class="card">
-      <div class="card-h"><h2><svg class="i"><use href="#i-pencil"/></svg>2. ข้อความที่พูดในคลิป</h2></div>
-      <textarea class="inp" id="cloneRef" style="height:90px;padding:12px;resize:vertical" placeholder="พิมพ์ให้ตรงกับที่พูดในคลิปต้นแบบ (ช่วยให้เสียงเหมือนขึ้นมาก)"></textarea>
+      <div class="card-h"><h2><svg class="i"><use href="#i-pencil"/></svg>2. ตั้งชื่อและเพศของเสียง</h2></div>
+      <div class="chips" id="cloneGender"><button class="chip on" data-v="m">เสียงผู้ชาย</button><button class="chip" data-v="f">เสียงผู้หญิง</button></div>
       <label class="lbl2">ตั้งชื่อเสียง</label>
       <input class="inp" id="cloneName" placeholder="เช่น เสียงของฉัน">
       <label class="check"><input type="checkbox" id="cloneConsent"><span>ฉันยืนยันว่านี่คือ<b>เสียงของฉันเอง</b> หรือเจ้าของเสียงอนุญาตให้ใช้แล้ว และจะไม่นำไปแอบอ้างหรือหลอกลวงผู้อื่น</span></label>
       <div class="row2" style="margin-top:14px">
         <button class="btn" id="btnCloneSave" style="flex:1"><svg class="i"><use href="#i-wand"/></svg>บันทึกและทดสอบเสียง</button>
       </div>
-      <p class="hint" id="cloneHint">ประมวลผลบน Hugging Face Space ฟรี (โมเดล F5-TTS) — ครั้งแรกอาจต้องรอคิว 30 วินาที – หลายนาที</p>
+      <p class="hint" id="cloneHint">ทดสอบและใช้งานบน Mac ที่เชื่อมไว้</p>
       <audio id="cloneOut" controls hidden></audio>
     </div>
     <div class="card">
-      <div class="card-h"><h2><svg class="i"><use href="#i-music"/></svg>เสียงที่โคลนไว้</h2></div>
+      <div class="card-h"><h2><svg class="i"><use href="#i-music"/></svg>เสียงของฉันที่บันทึกไว้</h2></div>
       <div id="cloneList"><p class="hint">ยังไม่มี</p></div>
     </div>
   </section>
@@ -225,16 +224,15 @@
         <button class="ghost" id="btnImgFromText"><svg class="i"><use href="#i-copy"/></svg>ใช้ข้อความ</button>
       </div>
       <div class="editor"><textarea id="imgPrompt" style="min-height:130px" placeholder="เช่น แมวส้มนั่งบนหลังคาวัด ยามพระอาทิตย์ตก แสงอบอุ่น"></textarea></div>
-      <label class="lbl2">ตัวสร้างภาพ</label>
+      <label class="lbl2">ตัวสร้างภาพ (บน Mac ของคุณ)</label>
       <div class="chips" id="imgEngine"></div>
-      <p class="hint" style="margin-top:6px">FLUX/คอมของฉัน: ไม่มีลายน้ำ (พิมพ์อังกฤษได้ผลดีสุด) · Pollinations: เร็วแต่อาจมีลายน้ำ</p>
+      <p class="hint" style="margin-top:6px">ไม่มีลายน้ำ ไม่มีโควตา · ใช้หารายได้ได้ (Apache-2.0) · พิมพ์คำสั่งเป็นภาษาอังกฤษได้ผลดีที่สุด</p>
       <label class="lbl2">สไตล์</label>
       <div class="chips" id="imgStyle"></div>
       <label class="lbl2">สัดส่วนภาพ</label>
       <div class="chips" id="imgRatio"></div>
       <label class="lbl2">จำนวนภาพ</label>
       <div class="chips" id="imgCount"></div>
-      <label class="switch"><span>ให้ AI ขัดเกลาคำสั่ง<br><small style="color:var(--mut)">ช่วยมากเมื่อพิมพ์เป็นภาษาไทย</small></span><input type="checkbox" id="imgEnhance" checked></label>
     </div>
     <button class="cta" id="btnImg"><span class="bars"><i></i><i></i><i></i><i></i></span><span id="imgCtaTxt">สร้างภาพ</span></button>
     <div class="status" id="imgStatus"></div>
@@ -267,11 +265,11 @@
   <button class="nav" data-go="studio"><svg class="i"><use href="#i-play"/></svg><div>สตูดิโอวิดีโอ (บท → วิดีโอ)<small>ภาพ + เสียงพากย์ + ซับ + SFX → MP4</small></div></button>
   <button class="nav" data-go="tts"><svg class="i"><use href="#i-vol"/></svg><div>แปลงข้อความเป็นเสียง<small>อ่านยาวต่อเนื่อง ดาวน์โหลดได้</small></div></button>
   <button class="nav" data-go="clone"><svg class="i"><use href="#i-mic"/></svg><div>โคลนเสียง<small>สร้างเสียงจากคลิปตัวอย่าง</small></div></button>
-  <button class="nav" data-go="image"><svg class="i"><use href="#i-image"/></svg><div>ข้อความเป็นรูปภาพ<small>สร้างภาพด้วย AI ฟรี</small></div></button>
+  <button class="nav" data-go="image"><svg class="i"><use href="#i-image"/></svg><div>ข้อความเป็นรูปภาพ<small>สร้างภาพบน Mac ของคุณ</small></div></button>
   <a class="nav" href="editor/"><svg class="i"><use href="#i-cut"/></svg><div>ตัดต่อคลิป Pro<small>Auto / Manual · ตัด แบ่ง ฟิลเตอร์ สติกเกอร์</small></div></a>
   <button class="nav" data-act="history"><svg class="i"><use href="#i-hist"/></svg><div>ประวัติการใช้งาน</div></button>
-  <button class="nav" data-act="proc"><svg class="i"><use href="#i-sliders"/></svg><div>ประมวลผล & สเปคเครื่อง<small>เลือก API / GPU / CPU / คอมของฉัน</small></div></button>
-  <button class="nav" data-act="settings"><svg class="i"><use href="#i-gear"/></svg><div>ตั้งค่า & คีย์ API</div></button>
+  <button class="nav" data-act="proc"><svg class="i"><use href="#i-sliders"/></svg><div>เชื่อมต่อ Mac & ประมวลผล<small>มือถือ · Mac · มือถือสั่ง Mac</small></div></button>
+  <button class="nav" data-act="settings"><svg class="i"><use href="#i-gear"/></svg><div>ตั้งค่า</div></button>
   <button class="nav" data-act="install"><svg class="i"><use href="#i-down"/></svg><div>ติดตั้งเป็นแอป (Android / Mac)</div></button>
   <button class="nav" data-act="about"><svg class="i"><use href="#i-info"/></svg><div>ทำอะไรได้ / ข้อจำกัด</div></button>
 </nav>

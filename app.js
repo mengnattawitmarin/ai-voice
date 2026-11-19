@@ -1,8 +1,7 @@
-/* Gen Medi — AI media studio: Text to Speech · Voice Clone · Text to Image · Video Studio
-   Runs fully in the browser. Free services used:
-   - Device voices: Web Speech API (offline, free)
-   - AI voices + images: Pollinations (gen.pollinations.ai / image.pollinations.ai)
-   - Voice cloning: a Hugging Face Space running F5-TTS, via @gradio/client
+/* Gen Medi — AI media studio: Text to Speech · My Voice · Text to Image · Video Studio · Cover/Live
+   No cloud APIs. Everything runs on this phone/browser or on the user's own Mac:
+   - Phone: Web Speech voices, on-device VITS voices (transformers.js), voice changer, SFX/music, video export
+   - Mac ("Gen Medi for Mac", server/genmedi_server.py): KhanomTan TTS, OpenVoice, FLUX/Segmind-Vega images
 */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -35,9 +34,8 @@ const db = (() => {
 
 /* ---------------- settings ---------------- */
 const S = Object.assign({
-  polKey:'', hfToken:'', space:'pythonlearnreal/F5-TTS-THAI',
   lang:'th', tone:1, style:'natural', rate:1, vol:1, voice:null,
-  cloneEngine:'hf', localDev:'auto', serverUrl:'', macSave:true, commercial:true, gKey:'', azKey:'', azRegion:'southeastasia', allowOverFree:false, cloneBase:null, imgEngine:'flux', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
+  localDev:'auto', serverUrl:'', macToken:'', macImg:'', macSave:true, commercial:true, imgEngine:'mac', imgStyle:'none', imgRatio:'1:1', imgCount:2, imgEnhance:true,
 }, LS.get('settings', {}));
 const save = () => LS.set('settings', S);
 if (!S.fx){ S.fx = {gender:'orig', age:'orig', srcG:'auto', effect:'none', pitch:0, formant:0, rev:0, echo:0}; if (S.tone && S.tone !== 1) S.fx.pitch = Math.round(12 * Math.log2(S.tone)); }
@@ -66,14 +64,6 @@ const STYLES = {
   clear:{n:'ช้าชัดเจน', d:'เหมาะกับผู้สูงอายุ/ฝึกภาษา', mul:0.8, gap:300},
   fast:{n:'ฟังเร็ว', d:'สรุปไว ประหยัดเวลา', mul:1.35, gap:0},
 };
-const AI_VOICES = [
-  ['nova','เสียงผู้หญิง (คุณภาพสูง)','เป็นธรรมชาติ ฟังสบาย ชัดเจน'],
-  ['shimmer','เสียงผู้หญิง นุ่มนวล','อ่อนโยน เหมาะเล่าเรื่อง'],
-  ['alloy','เสียงกลาง ๆ','สุภาพ เป็นกลาง'],
-  ['echo','เสียงผู้ชาย','นุ่ม อบอุ่น'],
-  ['onyx','เสียงผู้ชาย ทุ้ม','หนักแน่น เหมาะอ่านข่าว'],
-  ['fable','เสียงนักเล่าเรื่อง','มีสีสัน สำเนียงอังกฤษ'],
-];
 const LOCAL_VOICES = [  // mirrored in this repo's "models" branch (ONNX, transformers.js)
   ['th-female-v2','เสียงผู้หญิงไทย 1','th','ผู้หญิง'],
   ['th-female-v1','เสียงผู้หญิงไทย 2','th','ผู้หญิง'],
@@ -82,10 +72,6 @@ const LOCAL_VOICES = [  // mirrored in this repo's "models" branch (ONNX, transf
   ['th-male-narrator','เสียงผู้ชาย นักบรรยาย','th','ผู้ชาย'],
   ['th-mms','เสียงผู้ชาย MMS มาตรฐาน','th','ผู้ชาย'],
   ['en-mms','English voice (MMS, male)','en','ผู้ชาย'],
-];
-const SPACES = [
-  ['pythonlearnreal/F5-TTS-THAI','F5-TTS ภาษาไทย','เหมาะกับภาษาไทย'],
-  ['mrfakename/E2-F5-TTS','F5-TTS (อังกฤษ/จีน)','Space ต้นฉบับ'],
 ];
 const effRate = () => Math.min(3, Math.max(0.3, S.rate * (STYLES[S.style]||STYLES.natural).mul));
 
@@ -185,7 +171,7 @@ async function renderHomeProjects(){
 $$('.nav[data-go]').forEach(n => n.onclick = () => go(n.dataset.go));
 $$('.nav[data-act]').forEach(n => n.onclick = () => ({history:openHistory, settings:openSettings, install:openInstall, about:openAbout, proc:openProc})[n.dataset.act]());
 $('#btnAvatar').onclick = () => openSettings();
-$('#btnPro').onclick = () => openSettings(true);
+$('#btnPro').onclick = () => openProc();
 
 /* ---------------- source tabs ---------------- */
 const ta = $('#text');
@@ -301,106 +287,71 @@ function devForLang(){ return devVoices.filter(v => v.lang.toLowerCase().replace
 /* ---------------- licences: what can be used commercially ---------------- */
 const LIC = {
   device: {ok:null, t:'ไม่ยืนยัน (ขึ้นกับระบบมือถือ) · บันทึกเป็นไฟล์ไม่ได้'},
-  local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS (CC-BY-NC)'},
-  ai: {ok:null, t:'ไม่ยืนยัน — ตรวจเงื่อนไข Pollinations เอง'},
-  gcloud: {ok:true, t:'เชิงพาณิชย์ได้ — Google Cloud TTS'},
-  azure: {ok:true, t:'เชิงพาณิชย์ได้ — Microsoft Azure TTS'},
-  'clone-hf': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'},
-  'clone-server': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'},
-  'clone-openvoice': {ok:true, t:'เชิงพาณิชย์ได้ — OpenVoice V2 (MIT) + เสียงต้นทาง Google/Azure'},
-  'img-flux': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell (Apache 2.0)'},
-  'img-pol': {ok:null, t:'ไม่ยืนยัน — ตรวจเงื่อนไข Pollinations เอง'},
+  local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS/VITS (CC-BY-NC)'},
+  mac: {ok:true, t:'เชิงพาณิชย์ได้ — KhanomTan TTS v1.1 (Apache-2.0) บน Mac'},
+  clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + OpenVoice V2 (MIT) บน Mac'},
+  'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
+  // keys kept so projects made with earlier versions still show their licence
+  gcloud: {ok:true, t:'เชิงพาณิชย์ได้ — Google Cloud TTS'}, azure: {ok:true, t:'เชิงพาณิชย์ได้ — Microsoft Azure TTS'},
+  ai: {ok:null, t:'ไม่ยืนยัน — Pollinations'}, 'clone-openvoice': {ok:true, t:'เชิงพาณิชย์ได้ — OpenVoice V2 (MIT)'},
+  'clone-hf': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'}, 'clone-server': {ok:false, t:'ส่วนตัวเท่านั้น — F5-TTS (CC-BY-NC)'},
+  'img-flux': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell (Apache 2.0)'}, 'img-server': {ok:true, t:'เชิงพาณิชย์ได้ — Segmind-Vega (Apache 2.0)'}, 'img-pol': {ok:null, t:'ไม่ยืนยัน — Pollinations'},
 };
-function lic(k){
-  if (k === 'img-server'){ const c = SERVER_INFO?.image_commercial; return c === false ? {ok:false, t:'ส่วนตัวเท่านั้น — โมเดลภาพบนคอมไม่อนุญาตเชิงพาณิชย์'} : c == null && SERVER_INFO ? {ok:null, t:'ไม่ยืนยัน — ' + (SERVER_INFO.image_model || '')} : {ok:true, t:'เชิงพาณิชย์ได้ — Segmind-Vega (Apache 2.0)'}; }
-  return LIC[k] || {ok:null, t:'ไม่ยืนยัน'};
-}
+function lic(k){ return LIC[k] || {ok:null, t:'ไม่ยืนยัน'}; }
 const licTag = k => { const l = lic(k); return `<span class="tag ${l.ok ? 'ok' : l.ok === false ? 'bad' : 'warn'}">${l.ok ? '💼 เชิงพาณิชย์ได้' : l.ok === false ? '🚫 ส่วนตัว' : '❔ ไม่ยืนยัน'}</span>`; };
 const allowed = k => !S.commercial || lic(k).ok === true;
-const cloneMode = () => S.cloneEngine === 'openvoice' ? 'openvoice' : S.cloneEngine === 'server' ? 'server' : 'hf';
-const voiceLicKey = v => v.type === 'clone' ? 'clone-' + cloneMode() : v.type;
-function enforceCommercial(){ if (!S.commercial) return; if (!allowed('clone-' + cloneMode())) S.cloneEngine = 'openvoice'; if (!allowed('img-' + S.imgEngine)) S.imgEngine = 'flux'; save(); }
-
-/* ---------------- commercial cloud voices: Google Cloud TTS + Azure TTS ---------------- */
-const G_FALLBACK = [['th-TH-Chirp3-HD-Charon','MALE'],['th-TH-Chirp3-HD-Puck','MALE'],['th-TH-Chirp3-HD-Kore','FEMALE'],['th-TH-Chirp3-HD-Aoede','FEMALE'],['th-TH-Neural2-C','FEMALE'],['th-TH-Standard-A','FEMALE']];
-const AZ_FALLBACK = [['th-TH-NiwatNeural','Male'],['th-TH-PremwadeeNeural','Female'],['th-TH-AcharaNeural','Female']];
-let gVoices = LS.get('gVoices', null), azVoices = LS.get('azVoices', null);
+const voiceLicKey = v => v.type;
+function enforceCommercial(){ S.imgEngine = 'mac'; }
 const genderTh = g => /^m/i.test(g || '') ? 'ผู้ชาย' : /^f/i.test(g || '') ? 'ผู้หญิง' : 'กลาง';
-const gList = () => (gVoices && gVoices.length ? gVoices : G_FALLBACK).filter(v => v[0].toLowerCase().startsWith(lang()[2].toLowerCase()));
-const azList = () => (azVoices && azVoices.length ? azVoices : AZ_FALLBACK).filter(v => v[0].toLowerCase().startsWith(lang()[2].toLowerCase()));
-const gPretty = n => n.replace(/^[a-z]{2,3}-[A-Z]{2}-/, '').replace(/-/g, ' ');
-const azPretty = n => n.replace(/^[a-z]{2,3}-[A-Z]{2}-/, '').replace(/Neural$/, '');
-const gTier = n => /Chirp|Neural2|Studio|Polyglot|Journey/i.test(n) ? ['gcloud-premium', 1e6] : ['gcloud-std', 4e6];
-const ym = () => new Date().toISOString().slice(0, 7);
-const usageGet = k => LS.get('use.' + ym(), {})[k] || 0;
-function usageAdd(k, n){ const u = LS.get('use.' + ym(), {}); u[k] = (u[k] || 0) + n; LS.set('use.' + ym(), u); }
-function secsToNextMonth(){ const d = new Date(); return (new Date(d.getFullYear(), d.getMonth() + 1, 1) - d) / 1000; }
-function usageGuard(k, n, limit, qk){
-  if (S.allowOverFree || usageGet(k) + n <= limit) return;
-  Q.mark(qk, 'free-limit', secsToNextMonth());
-  throw new Error(`ครบโควตาฟรีเดือนนี้แล้ว (นับในแอป ${usageGet(k).toLocaleString('th-TH')}/${limit.toLocaleString('th-TH')} ตัวอักษร) — ใช้ต่อจะถูกคิดเงิน · เปิด “ยอมใช้เกินโควตาฟรี” ในตั้งค่าถ้าต้องการ`);
-}
-async function loadCloudVoices(){
-  if (S.gKey) try {
-    const r = await fetch(`https://texttospeech.googleapis.com/v1/voices?key=${encodeURIComponent(S.gKey)}`); const d = await r.json();
-    if (!r.ok) throw new Error(d.error?.message || r.status);
-    gVoices = (d.voices || []).filter(v => /^(th|en)-/.test(v.name)).map(v => [v.name, v.ssmlGender]); LS.set('gVoices', gVoices);
-  } catch(e){ toast('ดึงรายชื่อเสียง Google ไม่ได้: ' + e.message, true); }
-  if (S.azKey) try {
-    const r = await fetch(`https://${S.azRegion}.tts.speech.microsoft.com/cognitiveservices/voices/list`, {headers:{'Ocp-Apim-Subscription-Key': S.azKey}});
-    if (!r.ok) throw new Error(r.status === 401 ? 'คีย์หรือภูมิภาคไม่ถูกต้อง' : 'HTTP ' + r.status);
-    azVoices = (await r.json()).filter(v => /^(th|en)-/.test(v.ShortName)).map(v => [v.ShortName, v.Gender]); LS.set('azVoices', azVoices);
-  } catch(e){ toast('ดึงรายชื่อเสียง Azure ไม่ได้: ' + e.message, true); }
-  renderVoice();
-}
-async function gcloudTTS(text, name){
-  if (!S.gKey) throw new Error('ใส่คีย์ Google Cloud ในตั้งค่าก่อน');
-  const [uk, lim] = gTier(name); usageGuard(uk, text.length, lim, 'gcloud');
-  let r, d;
-  try {
-    r = await fetch('https://texttospeech.googleapis.com/v1/text:synthesize?key=' + encodeURIComponent(S.gKey), {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({input:{text}, voice:{languageCode: name.split('-').slice(0, 2).join('-'), name}, audioConfig:{audioEncoding:'MP3'}})});
-    d = await r.json().catch(() => ({}));
-  } catch(e){ throw new Error('เชื่อมต่อ Google Cloud ไม่ได้ — ตรวจอินเทอร์เน็ต'); }
-  if (!r.ok){
-    const m = d.error?.message || 'HTTP ' + r.status;
-    if (r.status === 429 || /quota|rate limit/i.test(m)){ Q.mark('gcloud', m, 60); throw new Error(quotaText('gcloud')); }
-    if (r.status === 403 || /key|billing|disabled/i.test(m)) throw new Error('Google Cloud: ' + m + ' — ตรวจว่าเปิด Cloud Text-to-Speech API + ผูกบัญชีชำระเงิน และคีย์อนุญาตเว็บนี้');
-    throw new Error('Google TTS ล้มเหลว: ' + m);
-  }
-  usageAdd(uk, text.length); Q.clear('gcloud');
-  const bin = atob(d.audioContent), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  return new Blob([u8], {type:'audio/mpeg'});
-}
-const xmlEsc = t => t.replace(/[<>&'"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;',"'":'&apos;','"':'&quot;'}[c]));
-async function azureTTS(text, name){
-  if (!S.azKey) throw new Error('ใส่คีย์ Azure Speech ในตั้งค่าก่อน');
-  usageGuard('azure', text.length, 5e5, 'azure');
-  const loc = name.split('-').slice(0, 2).join('-');
-  let r;
-  try {
-    r = await fetch(`https://${S.azRegion}.tts.speech.microsoft.com/cognitiveservices/v1`, {method:'POST',
-      headers:{'Ocp-Apim-Subscription-Key': S.azKey, 'Content-Type':'application/ssml+xml', 'X-Microsoft-OutputFormat':'audio-24khz-48kbitrate-mono-mp3'},
-      body: `<speak version='1.0' xml:lang='${loc}'><voice name='${name}'>${xmlEsc(text)}</voice></speak>`});
-  } catch(e){ throw new Error('เชื่อมต่อ Azure ไม่ได้ — ตรวจอินเทอร์เน็ต/ภูมิภาค'); }
-  if (!r.ok){
-    if (r.status === 429 || r.status === 403){ Q.mark('azure', 'quota', +r.headers.get('retry-after') || (r.status === 403 ? secsToNextMonth() : 60)); throw new Error(quotaText('azure')); }
-    if (r.status === 401) throw new Error('Azure: คีย์หรือภูมิภาคไม่ถูกต้อง (ตั้งค่า)');
-    throw new Error('Azure TTS ล้มเหลว (' + r.status + ')');
-  }
-  usageAdd('azure', text.length); Q.clear('azure');
-  return r.blob();
-}
-const commercialVoices = () => [...(S.gKey ? gList().map(v => ({type:'gcloud', id:v[0], g:v[1]})) : []), ...(S.azKey ? azList().map(v => ({type:'azure', id:v[0], g:v[1]})) : [])];
+const isUrl = t => /^https?:\/\//.test(t);
+
+/* ---------------- Gen Medi for Mac: the local AI server (no cloud APIs) ---------------- */
+// served by the Mac itself (localhost:7861 or its https tunnel) → same origin; otherwise paired by QR (?server=…&t=…)
+const SAME_ORIGIN = (location.port === '7861' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) || /\.trycloudflare\.com$/.test(location.hostname);
+const MAC_SPK_DEF = [{id:'Linda', name:'ลินดา (หญิง)', gender:'f'}, {id:'Kerstin', name:'เคอร์สติน (หญิง)', gender:'f'}, {id:'Bernard', name:'แบร์นาร์ด (ชาย)', gender:'m'}, {id:'Thorsten', name:'ทอร์สเทน (ชาย)', gender:'m'}];
+const MAC = {
+  info: LS.get('macInfo', null), state: 'unknown',
+  get base(){ return SAME_ORIGIN ? '' : (S.serverUrl || '').replace(/\/+$/, ''); },
+  get on(){ return SAME_ORIGIN || !!S.serverUrl; },
+  get local(){ return SAME_ORIGIN && location.port === '7861'; },
+  async call(path, opt = {}, ms = 900000){
+    if (!this.on) throw new Error('ยังไม่ได้เชื่อม Mac — เปิดแอป Gen Medi บน Mac แล้วสแกน QR ด้วยมือถือ (เมนู › เชื่อมต่อ Mac)');
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
+    let r;
+    try { r = await fetch(this.base + path, {...opt, signal: ctl.signal, headers: {...(opt.headers || {}), 'X-GM-Token': S.macToken || ''}}); }
+    catch(e){ this.state = 'offline'; renderQuota(); throw new Error(e.name === 'AbortError' ? 'Mac ตอบช้าเกินไป ลองใหม่' : 'ติดต่อ Mac ไม่ได้ — ตรวจว่าเปิดแอป Gen Medi บน Mac อยู่ (ถ้าเพิ่งเปิดแอปบน Mac ใหม่ ลิงก์จะเปลี่ยน → สแกน QR ใหม่)'); }
+    finally { clearTimeout(t); }
+    if (!r.ok){
+      let m = 'HTTP ' + r.status; try { const j = await r.json(); m = j.detail || j.error || m; } catch(e){}
+      if (r.status === 401){ this.state = 'unpaired'; renderQuota(); m = 'Mac ไม่รับการเชื่อมต่อ — สแกน QR บนหน้าจอ Mac ใหม่'; }
+      throw new Error(m);
+    }
+    if (this.state !== 'on'){ this.state = 'on'; renderQuota(); }
+    return r;
+  },
+  async refresh(){
+    if (!this.on){ this.state = 'off'; renderQuota(); return null; }
+    try { this.info = await (await this.call('/api/info', {}, 15000)).json(); LS.set('macInfo', this.info); }
+    catch(e){ return null; }
+    renderQuota(); try { renderVoice(); renderEst(); } catch(e){}
+    return this.info;
+  },
+  json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
+  form(path, fields, ms){ const fd = new FormData(); for (const [k, v] of Object.entries(fields)) if (v != null) fd.append(k, v, v instanceof Blob ? (v.name || 'file.' + extOf(v.type)) : undefined); return this.call(path, {method:'POST', body: fd}, ms); },
+  async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
+  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, engine: S.macImg || undefined}); const blob = await r.blob(); SPEED.learn('img-mac', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
+  speakers(){ return this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF; },
+};
+const commercialVoices = () => MAC.on ? MAC.speakers().map(s => ({type:'mac', id:s.id, g:s.gender})) : [];
+setTimeout(() => MAC.refresh(), 300);
+setInterval(() => { if (MAC.on && document.visibilityState === 'visible') MAC.refresh(); }, 60000);
 
 function curVoice(){
   let v = S.voice;
-  if (!v && S.commercial){ const c = commercialVoices()[0]; if (c) v = {type:c.type, id:c.id}; }
-  if (v?.type === 'gcloud'){ const g = (gVoices || G_FALLBACK).find(x => x[0] === v.id); return {type:'gcloud', id:v.id, name: gPretty(v.id) + ' (Google)', desc: genderTh(g?.[1]) + ' · Google Cloud · 💼 เชิงพาณิชย์ได้'}; }
-  if (v?.type === 'azure'){ const a = (azVoices || AZ_FALLBACK).find(x => x[0] === v.id); return {type:'azure', id:v.id, name: azPretty(v.id) + ' (Azure)', desc: genderTh(a?.[1]) + ' · Microsoft Azure · 💼 เชิงพาณิชย์ได้'}; }
-  if (v?.type === 'ai'){ const a = AI_VOICES.find(x => x[0] === v.id) || AI_VOICES[0]; return {type:'ai', id:a[0], name:a[1], desc:a[2] + ' · เสียง AI ดาวน์โหลดได้'}; }
-  if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้'}; }
-  if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงโคลน · ' + (c.tested ? 'ทดสอบแล้ว' : 'ยังไม่ได้ทดสอบ'), rec:c}; }
+  if (!v && S.commercial && MAC.on){ const c = commercialVoices()[0]; if (c) v = {type:c.type, id:c.id}; }
+  if (v?.type === 'mac'){ const s = MAC.speakers().find(x => x.id === v.id) || MAC.speakers()[0]; return {type:'mac', id:s.id, g:s.gender, name: s.name + ' · Mac', desc: 'KhanomTan บน Mac · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac')}; }
+  if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้ · 🚫 ส่วนตัว'}; }
+  if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงของฉัน (OpenVoice บน Mac) · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac'), rec:c}; }
   const list = devForLang();
   let d = (v?.type === 'device' && devVoices.find(x => x.voiceURI === v.id)) || null;
   if (!d || !d.lang.toLowerCase().startsWith(S.lang)) d = list.find(x => /premium|enhanced|natural|neural/i.test(x.name)) || list[0] || null;
@@ -418,37 +369,31 @@ function renderVoice(){
   try { renderEst(); renderQuota(); } catch(e){}
 }
 $('#btnVoice').onclick = () => {
-  const v = curVoice(); const keyOk = !!S.polKey;
+  const v = curVoice();
   const list = devForLang();
   const row = (k, n, d, on) => `<button class="opt ${on?'on':''}" data-k="${esc(k)}"><span class="dot"></span><span class="t"><b>${n}</b><small>${d}</small></span></button>`;
   let h = sheetHead('เลือกเสียง');
   h += `<label class="switch" style="margin:0 0 6px"><span>💼 โหมดเชิงพาณิชย์ (ทำวิดีโอหารายได้)<br><small style="color:var(--mut)">ดาวน์โหลด/แชร์/บันทึกได้เฉพาะเสียงที่สัญญาอนุญาตเชิงพาณิชย์</small></span><input type="checkbox" id="vComm" ${S.commercial ? 'checked' : ''}></label>`;
-  h += `<h4>💼 ใช้หารายได้ได้ — Google Cloud TTS</h4>`;
-  h += S.gKey ? gList().map(g => row('gcloud:'+g[0], esc(gPretty(g[0])) + ` <span class="tag">${genderTh(g[1])}</span> ` + licTag('gcloud'), 'คุณภาพสูง · ' + (gTier(g[0])[1] === 1e6 ? 'ฟรี 1 ล้านตัวอักษร/เดือน' : 'ฟรี 4 ล้านตัวอักษร/เดือน'), v.type==='gcloud' && v.id===g[0])).join('')
-    : `<button class="opt" data-setc><span class="dot"></span><span class="t"><b>＋ ตั้งค่า Google Cloud TTS</b><small>ไทย ชาย/หญิง · ฟรีสูงสุด 4 ล้านตัวอักษร/เดือน · ใช้เชิงพาณิชย์ได้</small></span></button>`;
-  h += `<h4>💼 ใช้หารายได้ได้ — Microsoft Azure TTS</h4>`;
-  h += S.azKey ? azList().map(a => row('azure:'+a[0], esc(azPretty(a[0])) + ` <span class="tag">${genderTh(a[1])}</span> ` + licTag('azure'), 'Neural · ฟรี 0.5 ล้านตัวอักษร/เดือน', v.type==='azure' && v.id===a[0])).join('')
-    : `<button class="opt" data-setc><span class="dot"></span><span class="t"><b>＋ ตั้งค่า Azure TTS</b><small>เปรมวดี (หญิง) · นิวัฒน์ (ชาย) · อัจฉรา (หญิง) · ฟรี 0.5 ล้านตัวอักษร/เดือน</small></span></button>`;
+  h += `<h4>💼 เสียงพากย์บน Mac — KhanomTan ${MAC.on ? (MAC.state === 'on' ? '<span class="tag ok">เชื่อมแล้ว</span>' : '<span class="tag warn">Mac ออฟไลน์?</span>') : ''}</h4>`;
+  h += MAC.on ? MAC.speakers().map(s => row('mac:' + s.id, esc(s.name) + ' ' + licTag('mac'), 'อ่านไทยได้ · ประมวลผลบน GPU ของ Mac · ไม่มีโควตา', v.type === 'mac' && v.id === s.id)).join('')
+    : `<button class="opt" data-mac><span class="dot"></span><span class="t"><b>＋ เชื่อมต่อ Mac</b><small>เปิดแอป Gen Medi บน Mac แล้วสแกน QR — ได้เสียงพากย์ที่ใช้หารายได้ได้ + สร้างภาพ</small></span></button>`;
+  h += `<h4>💼 เสียงของฉัน (โคลนจากเสียงตัวเอง)</h4>`;
+  h += clones.map(c => row('clone:' + c.id, esc(c.name) + ' ' + licTag('clone'), 'KhanomTan → แปลงเป็นเสียงคุณด้วย OpenVoice บน Mac', v.type === 'clone' && v.id === c.id)).join('');
+  h += `<button class="opt" data-gclone><span class="dot"></span><span class="t"><b>＋ เพิ่มเสียงของฉัน</b><small>อัดเสียงตัวเอง 10 วินาที</small></span></button>`;
   const locs = LOCAL_VOICES.filter(l => l[2] === S.lang);
   if (locs.length){
-    h += `<h4>เสียง AI ฟรีในเครื่อง ไม่ต้องใช้คีย์ ${licTag('local')}</h4>`;
-    h += locs.map(l => row('local:'+l[0], esc(l[1]) + ` <span class="tag">${l[3]}</span>`, 'ฟรี ออฟไลน์หลังโหลดครั้งแรก (~115MB) · ดาวน์โหลดไฟล์ได้', v.type==='local' && v.id===l[0])).join('');
+    h += `<h4>เสียง AI ฟรีในมือถือ ไม่ต้องใช้ Mac ${licTag('local')}</h4>`;
+    h += locs.map(l => row('local:'+l[0], esc(l[1]) + ` <span class="tag">${l[3]}</span>`, 'ออฟไลน์หลังโหลดครั้งแรก (~115MB) · ใช้ส่วนตัว/ทดลองบท', v.type==='local' && v.id===l[0])).join('');
   }
   if (S.lang === 'th' && window.VFX){
     const fx = VFX.norm(S.fx);
-    h += `<h4>🎭 เสียงแปลงด้วย AI — สร้างจากเสียงในเครื่อง ${licTag('local')}</h4>`;
+    h += `<h4>🎭 เสียงแปลงด้วย AI — สร้างจากเสียงในมือถือ ${licTag('local')}</h4>`;
     h += DERIV.map((d, i) => row('dv:' + i, d[3], d[4], v.type === 'local' && v.id === d[0] && fx.gender === d[1] && fx.age === d[2])).join('');
-    h += `<button class="opt" data-vfx><span class="dot"></span><span class="t"><b>🎛️ เปลี่ยนเพศ / วัย / เอฟเฟกต์ ของเสียงไหนก็ได้ →</b><small>หุ่นยนต์ โทรโข่ง ประกาศ ชิปมังก์ ผี ฯลฯ — ใช้ได้กับ Google/Azure (💼) และเสียงโคลนด้วย</small></span></button>`;
+    h += `<button class="opt" data-vfx><span class="dot"></span><span class="t"><b>🎛️ เปลี่ยนเพศ / วัย / เอฟเฟกต์ ของเสียงไหนก็ได้ →</b><small>หุ่นยนต์ โทรโข่ง ประกาศ ชิปมังก์ ผี ฯลฯ — ใช้กับเสียง Mac 💼 ได้ด้วย</small></span></button>`;
   }
-  h += `<h4>เสียง AI Pollinations ${licTag('ai')} ${keyOk ? '<span class="tag ok">พร้อมใช้</span>' : '<span class="tag warn">ต้องมีคีย์ + Pollen</span>'}</h4>`;
-  h += AI_VOICES.map(a => row('ai:'+a[0], esc(a[1]) + ` <span class="tag">${a[0]}</span>`, esc(a[2]) + ' · ดาวน์โหลด MP3 ได้', v.type==='ai' && v.id===a[0])).join('');
-  if (!keyOk) h += `<p class="hint">เสียง AI ใช้ Pollinations — <a href="#" data-set>ใส่คีย์ฟรีในตั้งค่า</a> (สมัครฟรี) อ่านภาษาไทยได้แต่สำเนียงอาจยังไม่เป๊ะ</p>`;
-  h += `<h4>เสียงที่โคลนไว้ ${licTag('clone-' + cloneMode())}</h4>`;
-  h += clones.length ? clones.map(c => row('clone:'+c.id, esc(c.name), 'เสียงโคลน · ' + (cloneMode() === 'openvoice' ? 'OpenVoice บนคอม' : 'F5-TTS'), v.type==='clone' && v.id===c.id)).join('') : '';
-  h += `<button class="opt" data-gclone><span class="dot"></span><span class="t"><b>＋ โคลนเสียงใหม่</b><small>อัดเสียงตัวเอง 10 วินาที</small></span></button>`;
   h += `<h4>เสียงระบบในเครื่อง (${esc(lang()[1])}) ${licTag('device')}</h4>`;
   h += list.length ? list.map(d => row('device:'+d.voiceURI, esc(prettyDev(d)), d.localService ? 'อยู่ในเครื่อง' : 'ออนไลน์', v.type==='device' && v.id===d.voiceURI)).join('')
-    : `<p class="hint">ไม่มีเสียง${esc(lang()[1])}ในเครื่องนี้ — iPhone: ตั้งค่า › การช่วยการเข้าถึง › เนื้อหาที่พูด › เสียง / Android: ตั้งค่า › การแปลงข้อความเป็นเสียง</p>`;
+    : `<p class="hint">ไม่มีเสียง${esc(lang()[1])}ในเครื่องนี้ — Android: ตั้งค่า › การแปลงข้อความเป็นเสียง</p>`;
   openSheet(h, el => {
     el.querySelectorAll('.opt[data-k]').forEach(b => b.onclick = () => {
       if (b.dataset.k.startsWith('dv:')){
@@ -457,13 +402,11 @@ $('#btnVoice').onclick = () => {
         save(); stopAll(); renderVoice(); closeAll(); toast('ใช้ ' + d[3].replace(/^\S+\s/, '') + ' แล้ว — ปรับต่อได้ที่ “เปลี่ยนเสียง”'); return;
       }
       const [type, ...rest] = b.dataset.k.split(':'); S.voice = {type, id: rest.join(':')}; save(); stopAll(); renderVoice(); closeAll();
-      if (type === 'ai' && !S.polKey) toast('อย่าลืมใส่คีย์ Pollinations ในตั้งค่า ถ้าเล่นไม่ได้');
     });
     el.querySelector('[data-gclone]').onclick = () => go('clone');
     el.querySelector('[data-vfx]')?.addEventListener('click', () => openVoiceFx());
-    el.querySelector('#vComm').onchange = e => { S.commercial = e.target.checked; enforceCommercial(); save(); renderVoice(); renderEngines(); toast(S.commercial ? 'เปิดโหมดเชิงพาณิชย์แล้ว' : 'ปิดโหมดเชิงพาณิชย์แล้ว'); };
-    el.querySelectorAll('[data-setc]').forEach(b => b.onclick = () => openSettings());
-    el.querySelector('[data-set]')?.addEventListener('click', e => { e.preventDefault(); openSettings(true); });
+    el.querySelector('[data-mac]')?.addEventListener('click', () => openProc());
+    el.querySelector('#vComm').onchange = e => { S.commercial = e.target.checked; save(); renderVoice(); toast(S.commercial ? 'เปิดโหมดเชิงพาณิชย์แล้ว' : 'ปิดโหมดเชิงพาณิชย์แล้ว'); };
   });
 };
 $('#btnPreview').onclick = async () => {
@@ -510,9 +453,7 @@ function srcGenderOf(v){
   if (!v) return null;
   const mf = s => /^f/i.test(s || '') ? 'f' : /^m/i.test(s || '') ? 'm' : null;
   if (v.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id); return l ? (l[3] === 'ผู้ชาย' ? 'm' : 'f') : null; }
-  if (v.type === 'gcloud') return mf(((gVoices || G_FALLBACK).find(x => x[0] === v.id) || [])[1]);
-  if (v.type === 'azure') return mf(((azVoices || AZ_FALLBACK).find(x => x[0] === v.id) || [])[1]);
-  if (v.type === 'ai') return ({nova:'f', shimmer:'f', echo:'m', onyx:'m'})[v.id] || null;
+  if (v.type === 'mac') return v.g || mf((MAC.speakers().find(x => x.id === v.id) || {}).gender);
   if (v.type === 'clone') return v.rec?.gender || null;
   if (v.type === 'device'){ const n = (v.obj?.name || '').toLowerCase(); return /female|woman|kanya|premwadee|achara|narisa/.test(n) ? 'f' : /male|\bman\b|niwat|pattara/.test(n) ? 'm' : null; }
   return null;
@@ -531,7 +472,7 @@ function openVoiceFx(){
   const fmtSt = x => (x > 0 ? '+' : '') + (+x) + (Math.abs(x) >= 1 || x == 0 ? '' : ''), fmtPct = x => Math.round(x * 100 / 0.6) + '%';
   let h = sheetHead('🎭 เปลี่ยนเสียง & เอฟเฟกต์');
   h += `<p class="hint" style="margin-top:0">ใช้กับ: <b>${esc(v.name)}</b> — ประมวลผลในเครื่อง ฟรี ไม่ใช้ API</p>`;
-  if (v.type === 'device') h += `<div class="lim">เสียงระบบในเครื่องเบราว์เซอร์<b>ไม่ให้ดึงเสียงมาแปลง</b> จึงปรับได้แค่ “ระดับเสียง” (เพศ/วัยแบบคร่าว ๆ) — เอฟเฟกต์เต็ม (แปลงเพศจริง หุ่นยนต์ โทรโข่ง ฯลฯ) ต้องใช้เสียง AI<div class="row2" style="margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="fxToLocal">ใช้เสียง AI ในเครื่อง (ฟรี)</button>${commercialVoices()[0] ? '<button class="btn sm alt" id="fxToComm">ใช้เสียง 💼 Google/Azure</button>' : ''}</div></div>`;
+  if (v.type === 'device') h += `<div class="lim">เสียงระบบในเครื่องเบราว์เซอร์<b>ไม่ให้ดึงเสียงมาแปลง</b> จึงปรับได้แค่ “ระดับเสียง” (เพศ/วัยแบบคร่าว ๆ) — เอฟเฟกต์เต็ม (แปลงเพศจริง หุ่นยนต์ โทรโข่ง ฯลฯ) ต้องใช้เสียง AI<div class="row2" style="margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="fxToLocal">ใช้เสียง AI ในเครื่อง (ฟรี)</button>${commercialVoices()[0] ? '<button class="btn sm alt" id="fxToComm">ใช้เสียง 💼 บน Mac</button>' : ''}</div></div>`;
   h += `<h4>เพศ</h4>${chips('gender', VFX.GENDERS)}`;
   h += `<h4>วัย</h4>${chips('age', VFX.AGES)}`;
   h += `<h4>เสียงต้นฉบับเป็น <small style="color:var(--mut);font-weight:400">ใช้คำนวณการแปลงเพศ</small></h4>${chips('srcG', srcList)}`;
@@ -682,7 +623,7 @@ const pkey = (v, text) => v.type + ':' + v.id + '|' + (v.type === 'device' ? '' 
 function prepare(v, text){
   const key = pkey(v, text);
   if (P.key !== key){
-    const max = v.type === 'device' ? 180 : (v.type === 'ai' || v.type === 'gcloud' || v.type === 'azure') ? 380 : v.type === 'local' ? 140 : 200;
+    const max = v.type === 'device' ? 180 : v.type === 'local' ? 140 : 220;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
   }
   P.voice = v;
@@ -789,71 +730,39 @@ async function synthesize(v, text, fx){
   catch(e){ console.warn(e); toast('แปลงเสียงไม่สำเร็จ ใช้เสียงต้นฉบับแทน (' + (e.message || e) + ')', true); return b; }
 }
 async function synthRaw(v, text){
-  if (v.type === 'gcloud' || v.type === 'azure'){ const t0 = performance.now(); const b = await (v.type === 'gcloud' ? gcloudTTS(text, v.id) : azureTTS(text, v.id)); SPEED.learn(v.type, (performance.now() - t0) / Math.max(1, text.length)); return b; }
-  if (v.type === 'local') return localTTS(text, v.id);
-  if (v.type === 'ai'){ const t0 = performance.now(); const b = await pollinationsTTS(text, v.id); SPEED.learn('ai', (performance.now() - t0) / Math.max(1, text.length)); return b; }
+  if (v.type === 'mac') return MAC.tts(text, v.id);
   if (v.type === 'clone') return cloneTTS(text, v.rec);
+  if (v.type === 'local') return localTTS(text, v.id);
   throw new Error('เสียงในเครื่องสร้างไฟล์เสียงไม่ได้');
 }
-/* ---------------- quota tracking (API engines) ---------------- */
-const QUOTA_NAMES = {
-  pollinations: 'เครดิต Pollinations (คีย์ของคุณ)',
-  polfree: 'Pollinations โหมดฟรี',
-  hf: 'GPU ฟรีของ Hugging Face (โคลนเสียง + FLUX)',
-  gcloud: 'Google Cloud TTS (โควตาฟรีรายเดือน)',
-  azure: 'Azure TTS (โควตาฟรีรายเดือน)',
-};
-const Q = {
-  all(){ const q = LS.get('quota', {}), now = Date.now(); let ch = false; for (const k in q) if (q[k].until && q[k].until < now){ delete q[k]; ch = true; } if (ch) LS.set('quota', q); return q; },
-  hit(k){ return this.all()[k] || null; },
-  mark(k, msg, sec, guess){ const q = this.all(); q[k] = {msg, at: Date.now(), until: sec ? Date.now() + sec*1000 : (k === 'pollinations' ? 0 : Date.now() + 30*60000), guess: !sec && k !== 'pollinations'}; LS.set('quota', q); renderQuota(); },
-  clear(k){ const q = this.all(); if (q[k]){ delete q[k]; LS.set('quota', q); renderQuota(); } },
-};
+/* ---------------- Mac status banner ---------------- */
 function fmtDur(sec){
   sec = Math.max(1, sec);
   if (sec < 60) return Math.round(sec) + ' วินาที';
   if (sec < 3600) return Math.round(sec / 60) + ' นาที';
   return (sec / 3600).toFixed(1).replace(/\.0$/, '') + ' ชั่วโมง';
 }
-function quotaText(k){
-  const q = Q.hit(k); if (!q) return '';
-  let t = `โควตา ${QUOTA_NAMES[k]} หมดแล้ว`;
-  if (k === 'pollinations') t += ' — ต้องเติม Pollen (ซื้อ หรือทำ Quests ที่ enter.pollinations.ai)';
-  else if (q.guess) t += ' — ระบบไม่ได้บอกเวลา ลองใหม่ในอีกสักพัก';
-  else t += ` — ใช้ได้อีกในประมาณ ${fmtDur((q.until - Date.now()) / 1000)}`;
-  return t;
-}
 function curPage(){ return $$('.page').find(p => p.classList.contains('on'))?.dataset.page || 'tts'; }
 function renderQuota(){
   const box = $('#quota'); if (!box) return;
-  try { renderEngines(); } catch(e){}
-  const page = curPage(), ks = [];
-  if (page === 'tts'){ const v = curVoice(); if (v.type === 'ai') ks.push('pollinations'); if (v.type === 'gcloud' || v.type === 'azure') ks.push(v.type); if (v.type === 'clone' && cloneMode() === 'hf') ks.push('hf'); }
-  if (page === 'clone' && cloneMode() === 'hf') ks.push('hf');
-  if (page === 'image'){ if (S.imgEngine === 'flux') ks.push('hf'); if (S.imgEngine === 'pol') ks.push(S.polKey && !Q.hit('pollinations') ? 'pollinations' : 'polfree'); if (S.imgEngine === 'pol' && S.polKey) ks.push('pollinations'); }
-  const hits = [...new Set(ks)].filter(k => Q.hit(k));
-  box.innerHTML = hits.map(k => {
-    const acts = [];
-    if (page === 'tts' && k === 'pollinations') acts.push(['local', 'ใช้เสียง AI ฟรีในเครื่อง']);
-    if (page === 'tts' && (k === 'gcloud' || k === 'azure')){ const o = commercialVoices().find(c => c.type !== k); if (o) acts.push(['sw:' + o.type + ':' + o.id, 'สลับไป ' + (o.type === 'gcloud' ? 'Google' : 'Azure')]); }
-    if (k === 'hf' && page !== 'image') acts.push(['cloneServer', 'ใช้คอมของฉัน']);
-    if (k === 'hf' && page === 'image'){ acts.push(['imgPol', 'ใช้ Pollinations']); acts.push(['imgServer', 'ใช้คอมของฉัน']); }
-    if (page === 'image' && k !== 'hf' && !Q.hit('hf')) acts.push(['imgFlux', 'ใช้ FLUX']);
-    return `<div class="qbar"><b>⚠️ ${esc(quotaText(k))}</b><div class="row2" style="flex-wrap:wrap;margin-top:8px">${acts.map(a => `<button class="btn sm alt" data-q="${a[0]}">${a[1]}</button>`).join('')}<button class="btn sm alt" data-q="proc">ดูตัวเลือก</button></div></div>`;
-  }).join('');
+  const page = curPage(), v = page === 'tts' ? curVoice() : null;
+  const needMac = page === 'image' || page === 'clone' || (v && (v.type === 'mac' || v.type === 'clone'));
+  let msg = '';
+  if (needMac && !MAC.on) msg = 'ยังไม่ได้เชื่อม Mac — งานนี้ประมวลผลบน Mac ของคุณ (ไม่ใช้ API ภายนอก)';
+  else if (needMac && MAC.state === 'offline') msg = 'ติดต่อ Mac ไม่ได้ — เปิดแอป Gen Medi บน Mac ค้างไว้ (ถ้าเปิดใหม่ ต้องสแกน QR ใหม่)';
+  else if (needMac && MAC.state === 'unpaired') msg = 'Mac ไม่รับการเชื่อมต่อ — สแกน QR บนหน้าจอ Mac ใหม่';
+  else if (needMac && MAC.info){
+    const want = page === 'image' ? [MAC.info.img_engine] : page === 'clone' ? ['voice'] : v?.type === 'clone' ? ['tts', 'voice'] : ['tts'];
+    const dl = want.map(k => MAC.info.models?.[k]).filter(m => m && m.state !== 'ready');
+    if (dl.length) msg = 'Mac กำลังเตรียมโมเดล: ' + dl.map(m => `${m.name} ${m.state === 'error' ? '(ผิดพลาด)' : (m.pct || 0) + '%'}`).join(' · ') + ' — ครั้งแรกเท่านั้น';
+  }
+  box.innerHTML = msg ? `<div class="qbar"><b>💻 ${esc(msg)}</b><div class="row2" style="flex-wrap:wrap;margin-top:8px"><button class="btn sm alt" data-q="proc">เชื่อมต่อ Mac</button>${needMac && page === 'tts' && LOCAL_VOICES.some(l => l[2] === S.lang) ? '<button class="btn sm alt" data-q="local">ใช้เสียงฟรีในมือถือ (🚫 ส่วนตัว)</button>' : ''}</div></div>` : '';
   box.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
-    const a = b.dataset.q;
-    if (a === 'local'){ const l = LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0]; S.voice = {type:'local', id:l[0]}; }
-    if (a === 'cloneServer' || a === 'imgServer'){ if (!S.serverUrl) return openProc(); if (a === 'cloneServer') S.cloneEngine = 'server'; else S.imgEngine = 'server'; }
-    if (a === 'imgPol') S.imgEngine = 'pol';
-    if (a.startsWith('sw:')){ const [, t, ...id] = a.split(':'); S.voice = {type:t, id:id.join(':')}; }
-    if (a === 'imgFlux') S.imgEngine = 'flux';
-    if (a === 'proc') return openProc();
-    save(); stopAll(); renderEngines(); renderVoice(); renderQuota(); toast('สลับแล้ว');
+    if (b.dataset.q === 'proc') return openProc();
+    const l = LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0]; S.voice = {type:'local', id:l[0]}; save(); stopAll(); renderVoice();
   });
 }
-setInterval(renderQuota, 30000);
-
+const renderEngines = () => {};
 /* ---------------- device spec + time estimates ---------------- */
 let SPEC = null;
 async function getSpec(){
@@ -871,31 +780,23 @@ const SPEED = {
   get(k){ return LS.get('speed', {})[k]; },
   learn(k, v){ if (!isFinite(v) || v <= 0) return; const s = LS.get('speed', {}); s[k] = s[k] ? s[k]*0.6 + v*0.4 : v; LS.set('speed', s); },
 };
-let SERVER_INFO = LS.get('serverInfo', null);
 function localDev(){ return S.localDev === 'wasm' ? 'wasm' : S.localDev === 'webgpu' ? 'webgpu' : (SPEC?.gpu ? 'webgpu' : 'wasm'); }
-function engineKey(v){ return v.type === 'local' ? 'local-' + localDev() : (v.type === 'ai' || v.type === 'gcloud' || v.type === 'azure') ? v.type : v.type === 'clone' ? 'clone-' + cloneMode() : 'device'; }
+function engineKey(v){ return v.type === 'local' ? 'local-' + localDev() : v.type === 'mac' || v.type === 'clone' ? v.type : 'device'; }
 function defMs(k){
-  const sp = SPEC || {mobile:true, cores:4};
-  const sd = SERVER_INFO?.device;
+  const sp = SPEC || {mobile:true, cores:4}, ram = MAC.info?.ram_gb || 16;
   switch (k){
     case 'local-webgpu': return sp.mobile ? 18 : sp.apple ? 5 : 7;
     case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
-    case 'ai': return 12;
-    case 'gcloud': return 6;
-    case 'azure': return 6;
-    case 'clone-openvoice': return 6 + (sd === 'cuda' ? 5 : 30);
-    case 'clone-hf': return 60;
-    case 'clone-server': return SERVER_INFO?.tts_ms_per_char || (sd === 'cuda' ? 15 : sd === 'cpu' ? 500 : 110);
-    case 'img-flux': return 12000;
-    case 'img-pol': return 9000;
-    case 'img-server': return SERVER_INFO?.img_ms || (sd === 'cuda' ? 1500 : sd === 'cpu' ? 45000 : 6000);
+    case 'mac': return MAC.info?.tts_ms_per_char || 12;
+    case 'clone': return (MAC.info?.tts_ms_per_char || 12) + 25;
+    case 'img-mac': return MAC.info?.['img_ms_' + MAC.info?.img_engine] || (MAC.info?.img_engine === 'vega' ? 15000 : ram >= 32 ? 25000 : 50000);
   }
   return 50;
 }
 function speedOf(k){ const m = SPEED.get(k); return {v: m || defMs(k), measured: !!m}; }
 function whereLabel(k){
-  return ({'local-webgpu':'GPU ในเครื่องนี้', 'local-wasm':'CPU ในเครื่องนี้', 'ai':'API Pollinations', 'gcloud':'API Google Cloud', 'azure':'API Azure', 'clone-openvoice':'Google/Azure + OpenVoice บนคอมของฉัน', 'clone-hf':'API Hugging Face', 'clone-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : ''),
-    'img-flux':'API FLUX (Hugging Face)', 'img-pol':'API Pollinations', 'img-server':'คอมของฉัน' + (SERVER_INFO?.chip ? ` (${SERVER_INFO.chip})` : '')})[k] || k;
+  const mac = 'Mac' + (MAC.info?.chip ? ` (${MAC.info.chip.replace(/^Apple /, '')}${MAC.info.ram_gb ? ' · ' + MAC.info.ram_gb + 'GB' : ''})` : '');
+  return ({'local-webgpu':'GPU ในมือถือเครื่องนี้', 'local-wasm':'CPU ในมือถือเครื่องนี้', 'mac': mac, 'clone': mac + ' + OpenVoice', 'img-mac': mac + ' · ' + (MAC.info?.img_engine === 'vega' ? 'Segmind-Vega' : 'FLUX.1-schnell')})[k] || k;
 }
 function estimateVoice(v, chars){
   const listen = chars / 13.3 / effRate();
@@ -904,26 +805,20 @@ function estimateVoice(v, chars){
   const lt = S.commercial && !allowed(voiceLicKey(v)) ? ' · ⚠️ เสียงนี้ใช้หารายได้ไม่ได้' : '';
   let over = 0, note = '';
   if (v.type === 'local' && !LS.get('dl.' + v.id, false)){ over = 115 * 8 / Math.max(SPEC?.net || 10, 8) + 5; note = ` · ครั้งแรกโหลดโมเดล ~${fmtDur(over)}`; }
-  if (k === 'ai' || k === 'gcloud' || k === 'azure') over = 2;
-  if (k === 'clone-hf'){ over = 20; note = ' · อาจต้องรอคิวเพิ่ม'; }
-  if (k === 'clone-server' && SERVER_INFO && !SERVER_INFO.tts_loaded){ over = 40; note = ' · ครั้งแรกคอมต้องโหลดโมเดล'; }
+  if (k === 'mac' || k === 'clone') over = 1;
   const first = over + firstChars * sp.v / 1000, total = over + chars * sp.v / 1000;
   const slow = sp.v > 75 / effRate() ? ' · สร้างช้ากว่าเสียงที่เล่น อาจหยุดรอเป็นช่วง ๆ' : '';
   return {first, total, listen, text: `⏱ เริ่มได้ยินใน ~${fmtDur(first)} · สร้างทั้งหมด ~${fmtDur(total)} · ${whereLabel(k)}${note}${slow} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}${lt}`};
 }
 function estimateImages(n){
-  const k = 'img-' + S.imgEngine, sp = speedOf(k);
-  let each = sp.v / 1000, extra = 0;
-  if (k === 'img-pol' && !S.polKey) extra = (n - 1) * 15;
-  if (k === 'img-flux') extra = 10;
-  if (k === 'img-server' && SERVER_INFO && !SERVER_INFO.img_loaded) extra = 60;
-  return {each, total: each * n + extra, text: `⏱ ประมาณ ${fmtDur(each)}/ภาพ · ${n} ภาพ ~${fmtDur(each * n + extra)} · ${whereLabel(k)} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}`};
+  const sp = speedOf('img-mac'), each = sp.v / 1000;
+  return {each, total: each * n, text: `⏱ ประมาณ ${fmtDur(each)}/ภาพ · ${n} ภาพ ~${fmtDur(each * n)} · ${whereLabel('img-mac')} · ${sp.measured ? 'วัดจากเครื่องคุณ' : 'ประมาณจากสเปค'}`};
 }
 function renderEst(){
   const chars = ta.value.trim().length;
   if ($('#est')) $('#est').textContent = chars && P.state === 'idle' ? estimateVoice(curVoice(), chars).text : '';
   if ($('#imgEst')) $('#imgEst').textContent = estimateImages(S.imgCount).text;
-  if ($('#cloneEst')) $('#cloneEst').textContent = `⏱ ประโยคทดสอบ ~${fmtDur((S.cloneEngine === 'server' ? 0 : 20) + 45 * speedOf('clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf')).v / 1000)} · ${whereLabel('clone-' + (S.cloneEngine === 'server' ? 'server' : 'hf'))}`;
+  if ($('#cloneEst')) $('#cloneEst').textContent = `⏱ ประโยคทดสอบ ~${fmtDur(2 + 45 * speedOf('clone').v / 1000)} · ${whereLabel('clone')}`;
 }
 
 /* ---------------- free on-device AI voice (transformers.js, WebGPU or CPU) ---------------- */
@@ -1008,136 +903,19 @@ function localTTS(text, model){
   return new Promise((res, rej) => { const id = ++ttsSeq; ttsJobs[id] = {res, rej, model, chars: clean.length, first}; getWorker().postMessage({id, model, text: clean, want: S.localDev || 'auto'}); });
 }
 
-async function pollinationsTTS(text, voice){
-  const k = S.polKey.trim();
-  let r, detail = '';
-  try {
-    r = await fetch(`https://gen.pollinations.ai/audio/${encodeURIComponent(text)}?voice=${voice}` + (k ? `&key=${encodeURIComponent(k)}` : ''));
-    if (!r.ok){
-      detail = await r.text().catch(() => '');
-      if (r.status !== 402 && !/pollen|balance|credit/i.test(detail))
-        r = await fetch('https://gen.pollinations.ai/v1/audio/speech', {method:'POST', headers:{'Content-Type':'application/json', ...(k ? {Authorization:'Bearer ' + k} : {})}, body: JSON.stringify({model:'openai/tts-1', input:text, voice})});
-    }
-  } catch(e){ throw new Error('เชื่อมต่อบริการเสียง AI ไม่ได้ — ตรวจอินเทอร์เน็ต'); }
-  if (!r.ok){
-    detail = (await r.clone().text().catch(() => '')) || detail;
-    if (r.status === 402 || /pollen|balance|credit|insufficient/i.test(detail)){ Q.mark('pollinations', detail.slice(0, 200), 0); throw new Error(quotaText('pollinations') + ' · เลือก “เสียง AI ฟรีในเครื่อง” แทนได้'); }
-    if (r.status === 401 || r.status === 403) throw new Error(k ? 'คีย์ Pollinations ไม่ถูกต้อง — ตรวจในตั้งค่า' : 'ต้องใส่คีย์ Pollinations ก่อน — หรือเลือก “เสียง AI ฟรีในเครื่อง” แทน');
-    if (r.status === 429){ const ra = +r.headers.get('retry-after') || 60; Q.mark('pollinations', 'rate limit', ra); throw new Error(quotaText('pollinations')); }
-    throw new Error(`เสียง AI ล้มเหลว (${r.status}) ${detail.slice(0,120)}`);
-  }
-  Q.clear('pollinations');
-  const b = await r.blob();
-  if (b.size < 800) throw new Error('ได้ไฟล์เสียงว่างเปล่า ลองใหม่อีกครั้ง');
-  return b.type ? b : new Blob([b], {type:'audio/mpeg'});
-}
-
-/* ---------------- Gradio connections: Hugging Face Spaces or "my computer" server ---------------- */
-let gradio = null; const GC = {};
-const plabel = p => ((p.label || '') + ' ' + (p.parameter_name || '')).toLowerCase();
-const isUrl = t => /^https?:\/\//.test(t);
-async function gconnect(target){
-  if (!target) throw new Error('ยังไม่ได้ตั้งค่า “คอมของฉัน” — ไปที่ ขั้นสูง › ประมวลผล');
-  const key = target + '|' + (isUrl(target) ? '' : S.hfToken);
-  if (GC[key]) return GC[key];
-  try { gradio ||= await import('https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js'); }
-  catch(e){ throw new Error('โหลดตัวเชื่อมต่อไม่ได้ — ตรวจอินเทอร์เน็ต'); }
-  try {
-    const client = await gradio.Client.connect(target, (!isUrl(target) && S.hfToken) ? {hf_token: S.hfToken.trim()} : {});
-    return GC[key] = {client, plans: {}};
-  } catch(e){
-    throw new Error(isUrl(target) ? `เชื่อมต่อคอมของฉันไม่ได้ — ตรวจว่าเปิดเซิร์ฟเวอร์อยู่ และลิงก์ยังไม่หมดอายุ (${e.message || e})` : `เชื่อมต่อ ${target} ไม่ได้ — Space อาจกำลังหลับ ลองใหม่ใน 1–2 นาที (${e.message || e})`);
-  }
-}
-function gradioErr(e, target, what){
-  const m = String(e?.message || e?.title || (typeof e === 'object' ? JSON.stringify(e) : e));
-  if (!isUrl(target) && /quota|ZeroGPU|exceeded|GPU (task|duration)/i.test(m)){
-    const t = m.match(/(\d+):(\d{2}):(\d{2})/), s2 = m.match(/(\d+)\s*s(?:ec|econds?)?\b.*(?:left|retry|again)/i);
-    const sec = t ? (+t[1])*3600 + (+t[2])*60 + (+t[3]) : null;
-    Q.mark('hf', m.slice(0, 200), sec);
-    return new Error(quotaText('hf') + ' · สลับไปใช้คอมของฉัน หรือใส่ HF token ในตั้งค่าเพื่อได้โควตาเพิ่ม');
-  }
-  return new Error(what + 'ล้มเหลว: ' + m.slice(0, 160));
-}
-async function serverInfo(){
-  const g = await gconnect(S.serverUrl);
-  const r = await g.client.predict('/info', []);
-  SERVER_INFO = JSON.parse(r.data[0]); LS.set('serverInfo', SERVER_INFO); return SERVER_INFO;
-}
-function planFromApi(api){
-  let best = null, bs = -1e9;
-  for (const [name, ep] of Object.entries(api.named_endpoints || {})){
-    const ps = ep.parameters || [];
-    const au = ps.filter(p => /audio|file/i.test(p.component || ''));
-    const tx = ps.filter(p => /textbox/i.test(p.component || ''));
-    const ra = (ep.returns || []).some(r => /audio/i.test(r.component || ''));
-    if (au.length !== 1 || !tx.length || !ra) continue;
-    let s = 0;
-    if (/tts|infer|synth|generat|clone|predict/i.test(name)) s += 3;
-    if (/basic|clone_tts/i.test(name)) s += 2;
-    if (/multi|podcast|chat|style|emotion|switch|load|update|transcri|speech_type|add/i.test(name)) s -= 6;
-    s -= ps.length * 0.1;
-    if (s > bs){ bs = s; best = {name, ps}; }
-  }
-  if (!best) return null;
-  const texts = best.ps.filter(p => /textbox/i.test(p.component));
-  let ref = texts.find(p => /ref|reference|prompt.?text|ต้นแบบ|อ้างอิง|transcri/.test(plabel(p)));
-  let gen = texts.find(p => p !== ref && /gen|generat|target|synth|text to|ข้อความ|input|^text/.test(plabel(p)));
-  if (!gen) gen = texts.find(p => p !== ref) || texts[0];
-  if (!ref && texts.length > 1) ref = texts.find(p => p !== gen);
-  return {name: best.name, ps: best.ps, ref, gen};
-}
-const cloneTarget = () => S.cloneEngine === 'server' ? S.serverUrl : S.space.trim();
-function cloneBaseVoice(){
-  const list = commercialVoices();
-  return list.find(c => S.cloneBase && c.type === S.cloneBase.type && c.id === S.cloneBase.id) || list.find(c => /^m/i.test(c.g)) || list[0] || null;
-}
-async function openVoiceTTS(text, rec){
-  if (!S.serverUrl) throw new Error('OpenVoice รันบน “คอมของฉัน” — เชื่อมต่อคอมก่อน (ขั้นสูง › ประมวลผล)');
-  const base = cloneBaseVoice();
-  if (!base) throw new Error('ต้องตั้งค่า Google Cloud หรือ Azure ก่อน (ใช้เป็นเสียงต้นทางที่ถูกลิขสิทธิ์)');
-  const src = await synthesize(base, text);
-  const g = await gconnect(S.serverUrl);
-  const t0 = performance.now();
-  let res;
-  try { res = await g.client.predict('/convert_voice', [gradio.handle_file(new File([src], 'src.mp3', {type: src.type})), gradio.handle_file(new File([rec.blob], 'ref.wav', {type: rec.blob.type || 'audio/wav'})), 0.3]); }
-  catch(e){ throw gradioErr(e, S.serverUrl, 'OpenVoice '); }
-  SPEED.learn('clone-openvoice', (performance.now() - t0) / Math.max(1, text.length));
-  const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url));
-  const url = typeof out === 'string' ? out : out?.url;
-  if (!url) throw new Error('คอมไม่ได้ส่งเสียงกลับมา (อัปเดตเซิร์ฟเวอร์: git pull)');
-  const r = await fetch(url); if (!r.ok) throw new Error('ดาวน์โหลดเสียงไม่ได้ (' + r.status + ')');
-  return r.blob();
+/* ---------------- my voice: KhanomTan (Apache) → OpenVoice (MIT) with your own recording, all on the Mac ---------------- */
+async function macVoiceId(rec){
+  if (rec.macVoice && MAC.info?.voices?.includes(rec.macVoice)) return rec.macVoice;
+  const r = await (await MAC.form('/api/voices', {audio: new File([rec.blob], 'ref.wav', {type: rec.blob.type || 'audio/wav'}), name: rec.id})).json();
+  rec.macVoice = r.id; await db.put('clones', rec);
+  if (MAC.info){ MAC.info.voices = [...(MAC.info.voices || []), r.id]; }
+  return r.id;
 }
 async function cloneTTS(text, rec){
-  if (!rec) throw new Error('ไม่พบเสียงโคลนนี้แล้ว');
-  if (cloneMode() === 'openvoice') return openVoiceTTS(text, rec);
-  const target = cloneTarget();
-  if (!isUrl(target) && Q.hit('hf')) throw new Error(quotaText('hf'));
-  const g = await gconnect(target), c = g.client;
-  if (!g.plans.clone){ g.plans.clone = planFromApi(await c.view_api()); if (!g.plans.clone) throw new Error('ปลายทางนี้ไม่มีช่อง “เสียงต้นแบบ + ข้อความ → เสียง” ให้เรียกใช้'); }
-  const plan = g.plans.clone;
-  const args = plan.ps.map(p => {
-    if (/audio|file/i.test(p.component)) return gradio.handle_file(rec.blob);
-    if (p === plan.gen) return text;
-    if (p === plan.ref) return rec.refText || '';
-    if (/speed/.test(plabel(p)) && /slider|number/i.test(p.component)) return 1;
-    if (p.parameter_has_default) return p.parameter_default;
-    if (p.example_input !== undefined) return p.example_input;
-    if (/checkbox/i.test(p.component)) return false;
-    return null;
-  });
-  const t0 = performance.now();
-  let res;
-  try { res = await c.predict(plan.name, args); } catch(e){ throw gradioErr(e, target, 'โคลนเสียง'); }
-  if (!isUrl(target)) Q.clear('hf');
-  SPEED.learn(isUrl(target) ? 'clone-server' : 'clone-hf', (performance.now() - t0) / Math.max(1, text.length));
-  const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url || x.path));
-  const url = typeof out === 'string' ? out : (out?.url || (out?.path && `${c.config?.root || ''}/file=${out.path}`));
-  if (!url) throw new Error('ปลายทางไม่ได้ส่งไฟล์เสียงกลับมา');
-  const r = await fetch(url, (!isUrl(target) && S.hfToken) ? {headers:{Authorization:'Bearer ' + S.hfToken.trim()}} : {});
-  if (!r.ok) throw new Error('ดาวน์โหลดเสียงไม่ได้ (' + r.status + ')');
-  return r.blob();
+  if (!rec) throw new Error('ไม่พบเสียงนี้แล้ว');
+  const vid = await macVoiceId(rec);
+  const spk = MAC.speakers(), base = spk.find(s => s.gender === (rec.gender || 'm')) || spk[0];
+  return MAC.tts(text, base.id, vid);
 }
 
 /* ---------------- audio utils ---------------- */
@@ -1176,8 +954,8 @@ async function buildFile(quiet){
   const v = curVoice();
   if (v.type === 'device'){
     if (quiet) return null;
-    openSheet(sheetHead('บันทึกเสียงเป็นไฟล์') + `<p class="lim">เสียงในเครื่องเล่นได้อย่างเดียว เบราว์เซอร์<b>ไม่อนุญาตให้อัดเป็นไฟล์</b><br>เปลี่ยนเป็น <b>เสียง AI</b> หรือ <b>เสียงโคลน</b> เพื่อดาวน์โหลดเป็น MP3/WAV ได้</p><button class="btn" style="width:100%" id="swAi">ใช้เสียง AI (Nova)</button>`,
-      el => el.querySelector('#swAi').onclick = () => { S.voice = {type:'ai', id:'nova'}; save(); renderVoice(); closeAll(); if (!S.polKey) openSettings(true); });
+    openSheet(sheetHead('บันทึกเสียงเป็นไฟล์') + `<p class="lim">เสียงในเครื่องเล่นได้อย่างเดียว เบราว์เซอร์<b>ไม่อนุญาตให้อัดเป็นไฟล์</b><br>เปลี่ยนเป็น <b>เสียงพากย์บน Mac 💼</b> หรือ <b>เสียง AI ฟรีในมือถือ</b> เพื่อดาวน์โหลดเป็นไฟล์ได้</p><button class="btn" style="width:100%" id="swAi">${MAC.on ? 'ใช้เสียงพากย์บน Mac' : 'ใช้เสียง AI ฟรีในมือถือ'}</button>`,
+      el => el.querySelector('#swAi').onclick = () => { if (MAC.on) S.voice = {type:'mac', id: MAC.speakers()[0].id}; else { const l = LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0]; S.voice = {type:'local', id:l[0]}; } save(); renderVoice(); closeAll(); });
     return null;
   }
   if (S.commercial && !allowed(voiceLicKey(v))){
@@ -1219,17 +997,15 @@ $('#dkShare').onclick = async () => {
 };
 
 /* ---------------- save to Mac + share (Android share sheet → Google Drive) ---------------- */
-const extOf = t => /png/.test(t) ? 'png' : /webp/.test(t) ? 'webp' : /wav/.test(t) ? 'wav' : /mpeg|mp3/.test(t) ? 'mp3' : /jpe?g/.test(t) ? 'jpg' : 'bin';
+const extOf = t => /png/.test(t) ? 'png' : /webp/.test(t) ? 'webp' : /wav/.test(t) ? 'wav' : /mpeg|mp3/.test(t) ? 'mp3' : /jpe?g/.test(t) ? 'jpg' : /mp4/.test(t) ? 'mp4' : /webm/.test(t) ? 'webm' : /midi/.test(t) ? 'mid' : /zip/.test(t) ? 'zip' : /text/.test(t) ? 'txt' : 'bin';
 const macSaved = new WeakSet();
 async function saveToMac(blob, kind, name){
-  if (!S.serverUrl || !S.macSave || !blob || macSaved.has(blob)) return;
+  if (!MAC.on || !S.macSave || !blob || macSaved.has(blob)) return;
   macSaved.add(blob);
   try {
-    const g = await gconnect(S.serverUrl);
-    const file = blob instanceof File ? blob : new File([blob], `ai-voice.${extOf(blob.type)}`, {type: blob.type});
-    const r = await g.client.predict('/save_file', [gradio.handle_file(file), kind, (name || '').slice(0, 60)]);
-    const path = String(r.data?.[0] || '');
-    toast('💾 บันทึกลง Mac แล้ว: ' + path.split('/').slice(-3).join('/'));
+    const file = blob instanceof File ? blob : new File([blob], `genmedi.${extOf(blob.type)}`, {type: blob.type});
+    const r = await (await MAC.form('/api/save', {file, kind, name: (name || '').slice(0, 60)})).json();
+    toast('💾 บันทึกลง Mac แล้ว: ' + String(r.path || '').split('/').slice(-3).join('/'));
   } catch(e){ macSaved.delete(blob); toast('บันทึกลง Mac ไม่สำเร็จ: ' + (e.message || e), true); }
 }
 let driveTipShown = LS.get('driveTip', false);
@@ -1284,130 +1060,94 @@ async function openHistory(){
 }
 
 /* ---------------- settings / install / about ---------------- */
-function openSettings(pro){
-  const spaceOpts = SPACES.map(s => `<option value="${s[0]}" ${S.space === s[0] ? 'selected' : ''}>${s[1]} — ${s[0]}</option>`).join('') + `<option value="__custom" ${SPACES.some(s => s[0] === S.space) ? '' : 'selected'}>กำหนดเอง…</option>`;
-  openSheet(sheetHead(pro ? 'ปลดล็อกฟีเจอร์ AI (ฟรี)' : 'ตั้งค่า & คีย์ API') + `
-    ${pro ? `<p class="lim">แอปนี้<b>ไม่มีค่าใช้จ่ายและไม่มีระบบจ่ายเงิน</b> — “โปร” คือการใส่คีย์ฟรีของบริการ AI เอง คีย์จะเก็บไว้ในเครื่องนี้เท่านั้น</p>` : ''}
-    <h4>💼 Google Cloud Text-to-Speech (เชิงพาณิชย์ได้)</h4>
-    <input class="inp" id="kG" placeholder="API key (AIza…)" value="${esc(S.gKey)}" autocomplete="off">
-    <p class="hint">ฟรีทุกเดือน: Standard/WaveNet 4 ล้าน · Chirp3 HD/Neural2 1 ล้านตัวอักษร (ต้องผูกบัตร คิดเงินเฉพาะส่วนเกิน) — ใช้ไปเดือนนี้ (นับในเครื่องนี้): Standard ${usageGet('gcloud-std').toLocaleString('th-TH')} · พรีเมียม ${usageGet('gcloud-premium').toLocaleString('th-TH')}<br>วิธีสมัคร: <a href="https://console.cloud.google.com/apis/library/texttospeech.googleapis.com" target="_blank" rel="noopener">เปิด Cloud Text-to-Speech API</a> → APIs &amp; Services › Credentials › Create API key → จำกัดคีย์ให้ใช้ได้เฉพาะ Text-to-Speech API และเว็บ mengnattawitmarin.github.io</p>
-    <h4>💼 Microsoft Azure Speech (เชิงพาณิชย์ได้)</h4>
-    <div class="row2"><input class="inp" id="kAz" placeholder="Speech key" value="${esc(S.azKey)}" autocomplete="off"><select class="inp" id="kAzR" style="max-width:150px">${['southeastasia','eastasia','japaneast','eastus','westeurope'].map(r => `<option ${S.azRegion === r ? 'selected' : ''}>${r}</option>`).join('')}</select></div>
-    <p class="hint">ระดับฟรี (F0): 0.5 ล้านตัวอักษร/เดือน ไม่คิดเงิน — ใช้ไปเดือนนี้: ${usageGet('azure').toLocaleString('th-TH')} · วิธีสมัคร: <a href="https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices" target="_blank" rel="noopener">สร้าง Speech resource</a> (Pricing tier: Free F0, Region: Southeast Asia) → Keys and Endpoint</p>
-    <label class="check"><input type="checkbox" id="kOver" ${S.allowOverFree ? 'checked' : ''}><span>ยอมใช้เกินโควตาฟรี (Google จะคิดเงินส่วนที่เกิน) — ปกติแอปจะหยุดให้เองเมื่อครบ</span></label>
-    <h4>เสียง AI + สร้างภาพ — Pollinations ❔</h4>
-    <input class="inp" id="kPol" placeholder="pk_… (Publishable key)" value="${esc(S.polKey)}" autocomplete="off">
-    <p class="hint">สมัครฟรีที่ <a href="https://enter.pollinations.ai" target="_blank" rel="noopener">enter.pollinations.ai</a> → สร้างคีย์ชนิด <b>Publishable (pk_)</b> แล้ววางที่นี่ ไม่ต้องใส่ก็สร้างภาพได้ แต่ช้ากว่า (1 ภาพ/15 วินาที) และเสียง AI ต้องใช้คีย์</p>
-    <h4>โคลนเสียง — Hugging Face Space</h4>
-    <select class="inp" id="kSpace">${spaceOpts}</select>
-    <input class="inp" id="kSpaceC" style="margin-top:8px" placeholder="ชื่อผู้ใช้/ชื่อ-space" value="${esc(S.space)}" ${SPACES.some(s => s[0] === S.space) ? 'hidden' : ''}>
-    <input class="inp" id="kHf" style="margin-top:8px" placeholder="hf_… (ไม่บังคับ)" value="${esc(S.hfToken)}" autocomplete="off">
-    <p class="hint">HF token (ฟรี) ช่วยเพิ่มโควตา GPU — สร้างที่ <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a> แบบ Read ก็พอ</p>
-    <div class="row2" style="margin-top:12px"><button class="btn" id="kSave" style="flex:1">บันทึก</button><button class="btn alt" id="kTest">ทดสอบ Space</button></div>
-    <p class="hint" id="kMsg"></p>
+function openSettings(){
+  openSheet(sheetHead('ตั้งค่า') + `
+    <label class="switch"><span>💼 โหมดเชิงพาณิชย์<br><small style="color:var(--mut)">ดาวน์โหลด/แชร์ได้เฉพาะงานที่สัญญาอนุญาตให้ใช้หารายได้</small></span><input type="checkbox" id="sComm" ${S.commercial ? 'checked' : ''}></label>
+    <p class="hint">แอปนี้<b>ไม่ใช้ API ภายนอก</b> — ประมวลผลบนมือถือเครื่องนี้ หรือบน Mac ของคุณเท่านั้น ไม่มีคีย์ ไม่มีโควตา ไม่มีค่าใช้จ่าย</p>
+    <button class="btn alt" style="width:100%;margin-top:8px" id="sMac">💻 เชื่อมต่อ Mac & ประมวลผล</button>
     <h4>ข้อมูลในเครื่อง</h4>
-    <div class="row2"><button class="btn danger sm" id="kClrH">ล้างประวัติ</button><button class="btn danger sm" id="kClrC">ลบเสียงโคลนทั้งหมด</button></div>`,
+    <div class="row2"><button class="btn danger sm" id="kClrH">ล้างประวัติ</button><button class="btn danger sm" id="kClrC">ลบเสียงของฉันทั้งหมด</button></div>`,
   el => {
-    const sp = el.querySelector('#kSpace'), spc = el.querySelector('#kSpaceC');
-    sp.onchange = () => { spc.hidden = sp.value !== '__custom'; if (!spc.hidden) spc.focus(); };
-    const apply = () => { S.gKey = el.querySelector('#kG').value.trim(); S.azKey = el.querySelector('#kAz').value.trim(); S.azRegion = el.querySelector('#kAzR').value; S.allowOverFree = el.querySelector('#kOver').checked; S.polKey = el.querySelector('#kPol').value.trim(); S.hfToken = el.querySelector('#kHf').value.trim(); S.space = (sp.value === '__custom' ? spc.value : sp.value).trim() || SPACES[0][0]; save(); };
-    el.querySelector('#kSave').onclick = () => { apply(); renderVoice(); renderEngines(); closeAll(); toast('บันทึกแล้ว'); loadCloudVoices(); };
-    el.querySelector('#kTest').onclick = async () => {
-      apply(); const m = el.querySelector('#kMsg'); m.textContent = 'กำลังเชื่อมต่อ ' + S.space + '…';
-      try { const g = await gconnect(S.space.trim()); const plan = g.plans.clone = planFromApi(await g.client.view_api());
-        m.innerHTML = plan ? `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ใช้ endpoint ${esc(plan.name)}</span>` : '<span style="color:var(--err)">เชื่อมต่อได้ แต่ไม่พบช่องโคลนเสียง</span>';
-      } catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
-    };
+    el.querySelector('#sComm').onchange = e => { S.commercial = e.target.checked; save(); renderVoice(); };
+    el.querySelector('#sMac').onclick = () => openProc();
     el.querySelector('#kClrH').onclick = async () => { await db.clear('history'); toast('ล้างประวัติแล้ว'); };
-    el.querySelector('#kClrC').onclick = async () => { await db.clear('clones'); clones = []; if (S.voice?.type === 'clone') S.voice = null; save(); renderVoice(); toast('ลบเสียงโคลนแล้ว'); };
+    el.querySelector('#kClrC').onclick = async () => { await db.clear('clones'); clones = []; if (S.voice?.type === 'clone') S.voice = null; save(); renderVoice(); toast('ลบเสียงของฉันแล้ว'); };
   });
 }
-/* ---------------- processing: API vs this device vs my computer ---------------- */
-const licIcon = k => { const l = lic(k); return l.ok ? '💼 ' : l.ok === false ? '🚫 ' : '❔ '; };
-function renderEngines(){
-  const hfOut = Q.hit('hf') ? ' · โควตาหมด' : '';
-  const gate = (k, fn) => v => { if (!allowed(k(v))){ toast('โหมดเชิงพาณิชย์: ' + lic(k(v)).t + ' — ปิดโหมดได้ที่การ์ดเลือกเสียง', true); renderEngines(); return; } fn(v); };
-  chips($('#imgEngine'), [['flux', licIcon('img-flux') + 'FLUX · ไม่มีลายน้ำ' + hfOut],['pol', licIcon('img-pol') + 'Pollinations' + (Q.hit(S.polKey ? 'pollinations' : 'polfree') ? ' · โควตาหมด' : '')],['server', licIcon('img-server') + 'คอมของฉัน']], S.imgEngine,
-    gate(v => 'img-' + v, v => { S.imgEngine = v; if (v === 'server' && !S.serverUrl) openProc(); renderEst(); renderQuota(); }));
-  chips($('#cloneEngine'), [['openvoice', licIcon('clone-openvoice') + 'OpenVoice (คอมของฉัน)'],['hf', licIcon('clone-hf') + 'F5 · API Hugging Face' + hfOut],['server', licIcon('clone-server') + 'F5 · คอมของฉัน']], S.cloneEngine,
-    gate(v => 'clone-' + v, v => { S.cloneEngine = v; if (v !== 'hf' && !S.serverUrl) openProc(); renderEst(); renderQuota(); renderVoice(); renderCloneBase(); }));
-  renderCloneBase();
-}
-function renderCloneBase(){
-  const sel = $('#cloneBase'); if (!sel) return;
-  const box = $('#cloneBaseBox'); box.hidden = cloneMode() !== 'openvoice';
-  const list = commercialVoices(), cur = cloneBaseVoice();
-  sel.innerHTML = list.length ? list.map(c => `<option value="${c.type}:${esc(c.id)}" ${cur && cur.type === c.type && cur.id === c.id ? 'selected' : ''}>${c.type === 'gcloud' ? 'Google · ' + esc(gPretty(c.id)) : 'Azure · ' + esc(azPretty(c.id))} (${genderTh(c.g)})</option>`).join('') : '<option value="">— ตั้งค่า Google Cloud หรือ Azure ก่อน —</option>';
-  sel.onchange = () => { const [t, ...id] = sel.value.split(':'); S.cloneBase = t ? {type:t, id:id.join(':')} : null; save(); };
+/* ---------------- processing: this phone · this Mac · phone → Mac ---------------- */
+const MAC_DMG = 'https://github.com/mengnattawitmarin/ai-voice/releases/download/mac/GenMedi-mac.dmg';
+function pairFrom(text){
+  text = (text || '').trim(); if (!text) return null;
+  try {
+    const u = new URL(isUrl(text) ? text : 'https://' + text);
+    const sv = u.searchParams.get('server'), t = u.searchParams.get('t');
+    if (sv) return {server: sv.replace(/\/+$/, ''), token: t || ''};
+    return {server: u.origin, token: u.searchParams.get('t') || S.macToken || ''};
+  } catch(e){ return null; }
 }
 async function openProc(){
   const sp = await getSpec();
-  const gpuTxt = sp.gpu ? `มี (WebGPU${sp.gpu.vendor ? ' · ' + esc(sp.gpu.vendor) : ''}${sp.gpu.arch ? ' ' + esc(sp.gpu.arch) : ''})` : 'ไม่รองรับในเบราว์เซอร์นี้ (ใช้ CPU แทน)';
+  await MAC.refresh();
+  const i = MAC.info, on = MAC.state === 'on' && i;
   const est = (k, chars) => { const v = speedOf(k); return `~${fmtDur(chars * v.v / 1000)}${v.measured ? ' (วัดจริง)' : ''}`; };
-  const imgE = k => { const v = speedOf(k); return `~${fmtDur(v.v / 1000)}/ภาพ${v.measured ? ' (วัดจริง)' : ''}`; };
   const opt = (grp, val, cur, title, sub, dis) => `<button class="opt ${val === cur ? 'on' : ''}" data-g="${grp}" data-v="${val}" ${dis ? 'disabled style="opacity:.45"' : ''}><span class="dot"></span><span class="t"><b>${title}</b><small>${sub}</small></span></button>`;
-  const qtag = k => Q.hit(k) ? ` <span class="tag warn">โควตาหมด</span>` : '';
-  openSheet(sheetHead('ประมวลผล & สเปคเครื่อง') + `
-    <div class="item" style="display:block"><b>เครื่องนี้: ${esc(sp.os)}${sp.mobile ? ' (มือถือ/แท็บเล็ต)' : ''}</b>
-      <small style="display:block;color:var(--mut);margin-top:4px;line-height:1.7">CPU ${sp.cores} คอร์ · RAM ${sp.mem ? '~' + sp.mem + ' GB' : 'ไม่ทราบ (เบราว์เซอร์ไม่บอก)'}<br>GPU: ${gpuTxt}${sp.net ? '<br>เน็ตประมาณ ' + sp.net + ' Mbps' : ''}</small></div>
-    <p class="hint">เวลาด้านล่างคิดจากข้อความ 1,000 ตัวอักษร (ฟังประมาณ 1.3 นาที) — เป็นค่าประมาณจากสเปค และจะแม่นขึ้นเองหลังใช้งานจริง</p>
-    <h4>เสียง AI ฟรีในเครื่อง — ประมวลผลบน</h4>
-    ${opt('localDev','auto',S.localDev || 'auto','อัตโนมัติ (แนะนำ)', 'ใช้ GPU ถ้ามี ไม่งั้นใช้ CPU · ' + est('local-' + (sp.gpu ? 'webgpu' : 'wasm'), 1000))}
+  const models = on ? Object.entries(i.models || {}).map(([k, m]) => `<div class="item" style="display:flex;gap:8px;align-items:center"><span style="flex:1">${esc(m.name)}</span><span class="tag ${m.state === 'ready' ? 'ok' : m.state === 'error' ? 'bad' : 'warn'}">${m.state === 'ready' ? 'พร้อม' : m.state === 'downloading' ? 'กำลังโหลด ' + (m.pct || 0) + '%' : m.state === 'error' ? 'ผิดพลาด' : 'ยังไม่โหลด'}</span></div>`).join('') : '';
+  let h = sheetHead('💻 เชื่อมต่อ Mac & ประมวลผล');
+  h += `<p class="hint" style="margin-top:0">ใช้ได้ 3 แบบ: <b>มือถืออย่างเดียว</b> · <b>Mac อย่างเดียว</b> · <b>มือถือสั่ง Mac</b> — ทุกอย่างประมวลผลบนเครื่องของคุณเอง ไม่ใช้ API ภายนอก</p>`;
+  if (MAC.local){
+    h += `<h4>📱 สั่งงานจากมือถือ</h4>
+      <div style="display:grid;place-items:center;background:#fff;border-radius:16px;padding:12px;margin:6px 0"><img id="pQr" src="/api/qr.svg?${Date.now()}" alt="QR" style="width:220px;height:220px"></div>
+      <p class="hint" id="pQrMsg">${i?.tunnel ? 'สแกนด้วยกล้องมือถือ (หรือแอป Gen Medi) — ใช้ได้ทั้งในบ้านและนอกบ้าน' : 'กำลังสร้างลิงก์ปลอดภัย (https)… รอสักครู่'}</p>
+      ${i?.pair ? `<input class="inp" readonly value="${esc(i.pair)}" onclick="this.select()">` : ''}
+      <p class="hint">ลิงก์จะเปลี่ยนทุกครั้งที่เปิดแอปบน Mac ใหม่ — ต้องสแกนใหม่ · <a href="#" id="pReset">ยกเลิกการจับคู่ทุกเครื่อง</a></p>`;
+  } else {
+    h += `<h4>Mac ของฉัน</h4>`;
+    h += on ? `<div class="item" style="display:block"><b>✓ เชื่อมแล้ว: ${esc(i.chip || 'Mac')}</b><small style="display:block;color:var(--mut);margin-top:4px">RAM ${i.ram_gb || '?'} GB · ${i.cores || '?'} คอร์ · Gen Medi ${esc(i.version || '')}</small></div>`
+      : `<ol class="lim" style="padding-left:18px;font-size:14px"><li>ดาวน์โหลด <a href="${MAC_DMG}" target="_blank" rel="noopener"><b>Gen Medi for Mac (.dmg)</b></a> บน Mac</li><li>เปิดไฟล์ → ลากไอคอนไปที่ <b>Applications</b> → เปิดแอป (ครั้งแรก: ตั้งค่าระบบ › ความเป็นส่วนตัวและความปลอดภัย › <b>เปิดต่อไป</b>)</li><li>รอติดตั้งครั้งแรก แล้ว<b>สแกน QR</b> ที่ขึ้นบนหน้าจอ Mac ด้วยกล้องมือถือ</li></ol>`;
+    h += `<div class="row2"><input class="inp" id="srvUrl" placeholder="หรือวางลิงก์จับคู่จาก Mac" value="${esc(S.serverUrl || '')}" autocomplete="off"><button class="btn" id="srvTest">เชื่อม</button></div><p class="hint" id="srvMsg">${MAC.on && !on ? 'ติดต่อ Mac ไม่ได้ — เปิดแอปบน Mac และสแกน QR ใหม่' : ''}</p>`;
+    if (S.serverUrl) h += `<button class="btn alt sm" id="srvOff">ยกเลิกการเชื่อม Mac</button>`;
+  }
+  if (on){
+    h += `<h4>โมเดลบน Mac</h4>${models}<button class="btn alt sm" id="pDl" style="margin-top:8px">ดาวน์โหลดโมเดลทั้งหมดตอนนี้</button>`;
+    h += `<h4>สร้างภาพบน Mac ใช้</h4>
+      ${opt('macImg','flux',S.macImg || i.img_engine,'FLUX.1-schnell 4-bit ' + licTag('img-mac'), 'คมชัดที่สุด · ต้องการ RAM 16GB+ · ' + fmtDur(defMs('img-mac') / 1000) + '/ภาพโดยประมาณ', (i.ram_gb || 16) < 16)}
+      ${opt('macImg','vega',S.macImg || i.img_engine,'Segmind-Vega (เร็ว) ' + licTag('img-mac'), 'เร็วกว่า ใช้ RAM น้อย · คุณภาพรองลงมา')}`;
+    h += `<label class="switch" style="margin-top:12px"><span>บันทึกงานลง Mac อัตโนมัติ<br><small style="color:var(--mut)" id="macDir">โฟลเดอร์: ${esc(i.save_dir || '?')}</small></span><input type="checkbox" id="macSave" ${S.macSave ? 'checked' : ''}></label>
+      <div class="row2" style="margin-top:10px"><button class="btn alt sm" id="macPick">เปลี่ยนโฟลเดอร์ (เลือกบน Mac)</button>${MAC.local ? '<button class="btn alt sm" id="macOpen">เปิดโฟลเดอร์</button>' : ''}</div>
+      <p class="hint">จัดเก็บเป็น <code>โฟลเดอร์/images|audio|videos|music/วันที่</code></p>`;
+  }
+  h += `<h4>เสียง AI ฟรีในมือถือ (ไม่ต้องใช้ Mac) — ประมวลผลบน</h4>
+    ${opt('localDev','auto',S.localDev || 'auto','อัตโนมัติ (แนะนำ)', 'ใช้ GPU ถ้ามี ไม่งั้นใช้ CPU · 1,000 ตัวอักษร ' + est('local-' + (sp.gpu ? 'webgpu' : 'wasm'), 1000))}
     ${opt('localDev','webgpu',S.localDev,'GPU (WebGPU)', sp.gpu ? 'เร็วที่สุด · ' + est('local-webgpu', 1000) : 'เบราว์เซอร์นี้ไม่รองรับ', !sp.gpu)}
-    ${opt('localDev','wasm',S.localDev,'CPU', 'ช้ากว่าแต่เสถียร ใช้ได้ทุกเครื่อง · ' + est('local-wasm', 1000))}
-    <p class="hint">เสียง AI แบบ API (Pollinations): ${est('ai', 1000)}${qtag('pollinations')}</p>
-    <label class="switch" style="margin:14px 0 4px"><span>💼 โหมดเชิงพาณิชย์<br><small style="color:var(--mut)">อนุญาตเฉพาะตัวเลือกที่ใช้หารายได้ได้</small></span><input type="checkbox" id="pComm" ${S.commercial ? 'checked' : ''}></label>
-    <h4>โคลนเสียง — ใช้</h4>
-    ${opt('cloneEngine','openvoice',S.cloneEngine,'OpenVoice บนคอมของฉัน ' + licTag('clone-openvoice'), 'เสียงต้นทาง Google/Azure → แปลงเป็นเสียงของคุณ · ' + (S.serverUrl ? est('clone-openvoice', 1000) : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน'), !allowed('clone-openvoice'))}
-    ${opt('cloneEngine','hf',S.cloneEngine,'F5 · API Hugging Face ' + licTag('clone-hf') + qtag('hf'), est('clone-hf', 1000) + ' + รอคิว · ' + (Q.hit('hf') ? esc(quotaText('hf')) : 'ไม่ต้องติดตั้งอะไร'), !allowed('clone-hf'))}
-    ${opt('cloneEngine','server',S.cloneEngine,'F5 · คอมของฉัน ' + licTag('clone-server'), S.serverUrl ? est('clone-server', 1000) + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน (ดูด้านล่าง)', !allowed('clone-server'))}
-    <p class="hint">โคลนเสียงรันในมือถือ/เบราว์เซอร์ไม่ได้ เพราะโมเดลใหญ่หลาย GB</p>
-    <h4>สร้างภาพ — ใช้</h4>
-    ${opt('imgEngine','flux',S.imgEngine,'API FLUX (ไม่มีลายน้ำ) ' + licTag('img-flux') + qtag('hf'), imgE('img-flux') + ' + รอคิว', !allowed('img-flux'))}
-    ${opt('imgEngine','pol',S.imgEngine,'API Pollinations ' + licTag('img-pol') + qtag(S.polKey ? 'pollinations' : 'polfree'), imgE('img-pol') + (S.polKey ? '' : ' · ไม่มีคีย์: รอ 15 วิ/ภาพ อาจมีลายน้ำ'), !allowed('img-pol'))}
-    ${opt('imgEngine','server',S.imgEngine,'คอมของฉัน (Segmind-Vega, ไม่มีลายน้ำ) ' + licTag('img-server'), S.serverUrl ? imgE('img-server') + ' · ไม่มีโควตา' : 'ต้องเปิดเซิร์ฟเวอร์บนคอมก่อน', !allowed('img-server'))}
-    <h4>คอมของฉัน (Mac / PC)</h4>
-    <div class="row2"><input class="inp" id="srvUrl" placeholder="https://xxxx.gradio.live" value="${esc(S.serverUrl)}" autocomplete="off"><button class="btn" id="srvTest">เชื่อม</button></div>
-    <p class="hint" id="srvMsg">${SERVER_INFO && S.serverUrl ? `ล่าสุด: ${esc(SERVER_INFO.chip || '')} · ${esc(SERVER_INFO.device)} · RAM ${SERVER_INFO.ram_gb || '?'} GB` : ''}</p>
-    <ol class="lim" style="padding-left:18px;font-size:13.5px">
-      <li>บน Mac: ติดตั้ง <b>Homebrew</b> แล้วรัน <code>brew install python@3.11 ffmpeg git</code></li>
-      <li><code>git clone https://github.com/mengnattawitmarin/ai-voice</code></li>
-      <li><code>cd ai-voice/server && ./start-mac.sh</code> (ครั้งแรกติดตั้ง+โหลดโมเดลหลาย GB)</li>
-      <li>สแกน QR ที่ขึ้นในหน้าต่าง Terminal ด้วยมือถือ หรือคัดลอกลิงก์ <code>https://…gradio.live</code> มาวางด้านบน</li>
-    </ol>
-    <label class="switch" style="margin-top:4px"><span>บันทึกภาพและเสียงลง Mac อัตโนมัติ<br><small style="color:var(--mut)" id="macDir">${SERVER_INFO?.save_dir ? 'โฟลเดอร์: ' + esc(SERVER_INFO.save_dir) : 'เชื่อมต่อเพื่อดูโฟลเดอร์'}</small></span><input type="checkbox" id="macSave" ${S.macSave ? 'checked' : ''}></label>
-    <button class="btn alt sm" id="macPick" style="margin-top:10px">เปลี่ยนโฟลเดอร์ (เลือกบนหน้าจอ Mac)</button>
-    <p class="hint">ไฟล์จะถูกจัดเป็น <code>โฟลเดอร์ที่เลือก/images/วันที่</code> และ <code>/audio/วันที่</code></p>
-    <p class="hint">Mac รุ่น M1/M2/M3 ใช้ GPU ผ่าน Metal อัตโนมัติ · ลิงก์ gradio.live เปลี่ยนทุกครั้งที่เปิดเซิร์ฟเวอร์ใหม่ (สแกน QR ใหม่) · ต้องเปิดคอมค้างไว้ตอนใช้</p>
-    <button class="btn alt sm" id="toKeys" style="margin-top:6px">ตั้งค่าคีย์ API…</button>`,
-  el => {
-    el.querySelectorAll('.opt[data-g]').forEach(b => b.onclick = () => {
+    ${opt('localDev','wasm',S.localDev,'CPU', 'ช้ากว่าแต่เสถียร · ' + est('local-wasm', 1000))}
+    <p class="hint">เครื่องนี้: ${esc(sp.os)} · CPU ${sp.cores} คอร์${sp.mem ? ' · RAM ~' + sp.mem + ' GB' : ''} · GPU ${sp.gpu ? 'มี' : 'ไม่รองรับ'}</p>`;
+  openSheet(h, el => {
+    el.querySelectorAll('.opt[data-g]').forEach(b => b.onclick = async () => {
       if (b.disabled) return;
-      const g = b.dataset.g, v = b.dataset.v;
-      if (v === 'server' && !S.serverUrl){ toast('วางลิงก์คอมของฉันด้านล่างก่อน'); el.querySelector('#srvUrl').focus(); }
-      S[g] = v; save();
+      const g = b.dataset.g, v = b.dataset.v; S[g] = v; save();
       el.querySelectorAll(`.opt[data-g="${g}"]`).forEach(x => x.classList.toggle('on', x === b));
-      renderEngines(); renderVoice(); renderQuota();
+      if (g === 'macImg') try { await MAC.json('/api/settings', {img_engine: v}); MAC.refresh(); } catch(e){ toast(e.message, true); }
+      renderVoice(); renderEst(); renderImgEngine();
     });
-    el.querySelector('#srvTest').onclick = async () => {
-      const m = el.querySelector('#srvMsg'); let u = el.querySelector('#srvUrl').value.trim().replace(/\/+$/, '');
-      if (u && !isUrl(u)) u = 'https://' + u;
-      S.serverUrl = u; save(); if (!u){ m.textContent = ''; return; }
-      m.textContent = 'กำลังเชื่อมต่อ…';
-      try { const i = await serverInfo(); el.querySelector('#macDir').textContent = 'โฟลเดอร์: ' + (i.save_dir || '?'); m.innerHTML = `<span style="color:var(--ok)">เชื่อมต่อได้ ✓ ${esc(i.chip || '')} · ${esc(i.device === 'mps' ? 'GPU Apple (Metal)' : i.device === 'cuda' ? 'GPU NVIDIA' : 'CPU')} · RAM ${i.ram_gb || '?'} GB</span>`; renderEst(); }
-      catch(e){ m.innerHTML = `<span style="color:var(--err)">${esc(e.message)}</span>`; }
-    };
-    el.querySelector('#toKeys').onclick = () => openSettings();
-    el.querySelector('#pComm').onchange = e => { S.commercial = e.target.checked; enforceCommercial(); save(); renderEngines(); renderVoice(); openProc(); };
-    el.querySelector('#macSave').onchange = e => { S.macSave = e.target.checked; save(); };
-    el.querySelector('#macPick').onclick = async () => {
-      if (!S.serverUrl) return toast('เชื่อมต่อคอมของฉันก่อน', true);
+    el.querySelector('#srvTest')?.addEventListener('click', async () => {
+      const m = el.querySelector('#srvMsg'), p = pairFrom(el.querySelector('#srvUrl').value);
+      if (!p){ S.serverUrl = ''; save(); m.textContent = ''; return; }
+      S.serverUrl = p.server; if (p.token) S.macToken = p.token; save(); m.textContent = 'กำลังเชื่อมต่อ…';
+      const r = await MAC.refresh();
+      if (r){ toast('เชื่อม Mac แล้ว ✓'); openProc(); } else m.innerHTML = '<span style="color:var(--err)">เชื่อมไม่ได้ — ตรวจว่าแอปบน Mac เปิดอยู่ และใช้ลิงก์ล่าสุด</span>';
+    });
+    el.querySelector('#srvOff')?.addEventListener('click', () => { S.serverUrl = ''; S.macToken = ''; save(); MAC.info = null; MAC.state = 'off'; renderVoice(); renderQuota(); openProc(); });
+    el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,' + (S.macImg || i.img_engine)}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
+    el.querySelector('#macSave')?.addEventListener('change', e => { S.macSave = e.target.checked; save(); });
+    el.querySelector('#macOpen')?.addEventListener('click', () => MAC.json('/api/open_folder'));
+    el.querySelector('#macPick')?.addEventListener('click', async () => {
       const d = el.querySelector('#macDir'); d.textContent = 'ไปที่หน้าจอ Mac แล้วเลือกโฟลเดอร์ในหน้าต่างที่เด้งขึ้น…';
-      try { const g = await gconnect(S.serverUrl); const r = await g.client.predict('/choose_folder', []); const path = String(r.data?.[0] || '');
-        if (SERVER_INFO) { SERVER_INFO.save_dir = path; LS.set('serverInfo', SERVER_INFO); }
-        d.textContent = 'โฟลเดอร์: ' + path; toast('ตั้งโฟลเดอร์เก็บงานบน Mac แล้ว');
-      } catch(e){ d.textContent = 'เปลี่ยนโฟลเดอร์ไม่สำเร็จ: ' + (e.message || e); }
-    };
+      try { const r = await (await MAC.json('/api/choose_folder')).json(); d.textContent = 'โฟลเดอร์: ' + r.path; MAC.refresh(); }
+      catch(e){ d.textContent = 'เปลี่ยนโฟลเดอร์ไม่สำเร็จ: ' + (e.message || e); }
+    });
+    el.querySelector('#pReset')?.addEventListener('click', async e => { e.preventDefault(); await MAC.json('/api/token/reset'); toast('ยกเลิกแล้ว — มือถือทุกเครื่องต้องสแกน QR ใหม่'); setTimeout(openProc, 500); });
+    const qr = el.querySelector('#pQr');
+    if (qr && !i?.tunnel){ const t = setInterval(async () => { if (!document.body.contains(qr)){ clearInterval(t); return; } const r = await MAC.refresh(); if (r?.tunnel){ clearInterval(t); openProc(); } }, 3000); }
   });
 }
 let installEvt = null;
@@ -1425,31 +1165,24 @@ function openInstall(){
 }
 function openAbout(){
   openSheet(sheetHead('ทำอะไรได้ / ข้อจำกัด') + `<ul class="lim" style="padding-left:18px">
-    <li class="y">✓ อ่านข้อความยาวไม่จำกัด แบ่งช่วงอัตโนมัติ แตะประโยคเพื่อข้ามไปได้</li>
-    <li class="y">✓ นำเข้า .txt .pdf .docx .srt รูปถ่าย (OCR ไทย/อังกฤษ) และลิงก์เว็บ</li>
-    <li class="y">✓ พูดเพื่อพิมพ์ (ไมค์) · ปรับความเร็ว ระดับเสียง โทน รูปแบบการอ่าน · 13 ภาษา</li>
-    <li class="y">✓ เสียง AI ไทยฟรี ไม่ต้องใช้คีย์ (ประมวลผลในมือถือ) ดาวน์โหลด WAV ได้</li>
-    <li class="y">✓ เสียง AI 6 แบบของ Pollinations ดาวน์โหลด MP3 (ต้องมีคีย์ + Pollen)</li>
-    <li class="m">△ เสียง AI ฟรีในเครื่อง (หญิง 2 · ชาย 4): โหลดโมเดล ~115MB ต่อเสียงครั้งแรก แล้วใช้ออฟไลน์ได้ · โมเดล MMS เป็นสัญญาอนุญาต CC-BY-NC (ห้ามใช้เชิงพาณิชย์) มือถือรุ่นเก่าอาจช้า ตัวเลข/คำอังกฤษในข้อความไทยอาจอ่านไม่ถูก</li>
-    <li class="y">✓ โคลนเสียงจากคลิป 6–15 วินาที ผ่าน F5-TTS บน Hugging Face (ฟรี)</li>
-    <li class="y">✓ สร้างภาพจากข้อความ 8 สไตล์ 4 สัดส่วน ดาวน์โหลด/แชร์ได้</li>
-    <li class="y">✓ ประวัติการใช้งาน · ติดตั้งเป็นแอปบนมือถือ (PWA)</li>
-    <li class="m">△ เสียงในเครื่อง: ฟรี/ออฟไลน์ แต่<b>บันทึกเป็นไฟล์ไม่ได้</b> คุณภาพขึ้นกับรุ่นมือถือ</li>
-    <li class="m">△ เสียง AI อ่านไทยได้ แต่สำเนียงยังไม่เหมือนคนไทย 100% · เครดิตฟรีมีจำกัดต่อวัน</li>
-    <li class="m">△ โคลนเสียง: ช้า (รอคิว GPU ฟรี) โควตาจำกัด Space อาจปิด/เปลี่ยนได้ทุกเมื่อ คุณภาพภาษาไทยยังไม่สมบูรณ์ ข้อความยาวจะใช้เวลานานมาก</li>
-    <li class="y">✓ สร้างภาพด้วย FLUX บน Hugging Face: ฟรี ไม่มีลายน้ำ (ใช้โควตา GPU ฟรี ถ้าหมดจะสลับไป Pollinations ให้เอง)</li>
-    <li class="m">△ Pollinations โหมดฟรี: 1 ภาพ/~15 วินาที อาจมีลายน้ำ · คำสั่งภาษาไทยได้ผลน้อยกว่าอังกฤษ (FLUX ยิ่งต้องใช้อังกฤษ)</li>
-    <li class="y">✓ โหมดเชิงพาณิชย์ 💼: เสียง Google Cloud / Azure (ไทย ชาย-หญิง), โคลนด้วย OpenVoice (MIT), ภาพ FLUX (Apache 2.0) / Segmind-Vega (Apache 2.0)</li>
-    <li class="m">△ “ใช้หารายได้ได้” หมายถึงสัญญาอนุญาตของโมเดล/บริการอนุญาต — ยังต้องทำตามเงื่อนไขบริการ นโยบายแพลตฟอร์ม (YouTube/TikTok) และกฎหมาย ไม่ใช่คำปรึกษากฎหมาย</li>
-    <li class="n">✗ โคลน “เสียงใครก็ได้” โดยไม่ได้รับอนุญาต — แอปให้ใช้เฉพาะเสียงตัวเองหรือที่เจ้าของยินยอม</li>
-    <li class="n">✗ ระบบสมาชิก/จ่ายเงินจริง (ปุ่มโปร = ใส่คีย์ฟรี) · ซิงก์ข้ามเครื่อง (ข้อมูลอยู่ในเครื่องนี้)</li>
-    <li class="n">✗ เล่นต่อตอนล็อกจอได้ไม่เสถียร โดยเฉพาะ iPhone</li></ul>
-    <p class="hint">บริการภายนอก: Pollinations.ai · Hugging Face Spaces · r.jina.ai · pdf.js · mammoth · tesseract.js</p>`);
+    <li class="y">✓ <b>ไม่ใช้ API ภายนอก</b> — ประมวลผลบนมือถือ หรือบน Mac ของคุณ (ไม่มีคีย์ ไม่มีโควตา ไม่มีค่าใช้จ่าย)</li>
+    <li class="y">✓ 3 แบบ: มือถืออย่างเดียว · Mac อย่างเดียว (แอป Gen Medi for Mac) · มือถือสั่ง Mac ผ่าน QR (ใช้ได้นอกบ้าน)</li>
+    <li class="y">✓ 💼 เสียงพากย์ KhanomTan v1.1 (Apache-2.0) บน Mac · เสียงของฉันด้วย OpenVoice V2 (MIT)</li>
+    <li class="y">✓ 💼 ภาพ FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน GPU ของ Mac บันทึกลงโฟลเดอร์ที่เลือก</li>
+    <li class="y">✓ เปลี่ยนเสียง (เพศ/วัย/เอฟเฟกต์ 32 แบบ) · SFX · เพลงประกอบ · สตูดิโอวิดีโอ · โหมดคัฟเวอร์/ไลฟ์ — ทำในมือถือได้</li>
+    <li class="m">△ KhanomTan v1.1 ใช้ผู้พูดจากชุดข้อมูลสาธารณะ (ยุโรป) อ่านภาษาไทย — สำเนียงยังไม่เป็นธรรมชาติเท่าบริการคลาวด์ แนะนำใช้ “เสียงของฉัน” เพื่อให้เสียงเป็นคนไทย</li>
+    <li class="m">△ เสียง AI ฟรีในมือถือ (MMS/VITS) เป็น CC-BY-NC — ใช้ส่วนตัว/ทดลองบทเท่านั้น</li>
+    <li class="m">△ สร้างภาพบนมือถืออย่างเดียวยังไม่ได้ (โมเดลใหญ่เกิน) ต้องเชื่อม Mac</li>
+    <li class="m">△ Mac ต้องเปิดแอปค้างไว้ตอนใช้ · ลิงก์จับคู่เปลี่ยนทุกครั้งที่เปิดแอปบน Mac ใหม่ (สแกน QR ใหม่)</li>
+    <li class="m">△ “ใช้หารายได้ได้” หมายถึงสัญญาอนุญาตของโมเดลอนุญาต — ยังต้องทำตามนโยบายแพลตฟอร์มและกฎหมาย ไม่ใช่คำปรึกษากฎหมาย</li>
+    <li class="n">✗ โคลน “เสียงใครก็ได้” โดยไม่ได้รับอนุญาต — ใช้เฉพาะเสียงตัวเองหรือที่เจ้าของยินยอม</li>
+    <li class="n">✗ ดึงเพลงจาก YouTube/Spotify — โหมดคัฟเวอร์รับไฟล์ที่คุณมีสิทธิ์ใช้เท่านั้น</li></ul>
+    <p class="hint">ไลบรารีที่ใช้: transformers.js · Coqui TTS · OpenVoice · MFLUX · diffusers · pdf.js · mammoth · tesseract.js · mp4-muxer · lamejs · Cloudflare quick tunnel</p>`);
 }
-
 /* ---------------- clone page ---------------- */
 let mr = null, recBlob = null, recTimer = null;
 const recBtn = $('#btnRec'), recState = $('#recState');
+$$('#cloneGender .chip').forEach(b => b.onclick = () => $$('#cloneGender .chip').forEach(x => x.classList.toggle('on', x === b)));
 async function setCloneSource(blob){
   try { const ab = await decode(blob); recBlob = encodeWav([mono(ab, 15)], ab.sampleRate); const d = Math.min(15, ab.duration);
     recState.textContent = `ได้คลิป ${d.toFixed(1)} วินาที ✓` + (ab.duration > 15 ? ' (ตัดเหลือ 15 วิ)' : d < 4 ? ' — สั้นไป ควร 6 วิขึ้นไป' : '');
@@ -1470,22 +1203,20 @@ recBtn.onclick = async () => {
   } catch(e){ toast('เปิดไมโครโฟนไม่ได้ — อนุญาตการใช้ไมค์ในเบราว์เซอร์ หรืออัปโหลดไฟล์แทน', true); }
 };
 $('#cloneFile').onchange = e => { const f = e.target.files[0]; if (f) setCloneSource(f); e.target.value = ''; };
-$('#cloneRef').value = '';
-$('#sayBox').onclick = () => { if (!$('#cloneRef').value) $('#cloneRef').value = $('#sayText').textContent; };
 $('#btnCloneSave').onclick = async () => {
   if (!recBlob) return toast('อัดหรืออัปโหลดเสียงต้นแบบก่อน', true);
   if (!$('#cloneConsent').checked) return toast('ต้องยืนยันว่าเป็นเสียงของคุณหรือได้รับอนุญาตแล้ว', true);
   const name = $('#cloneName').value.trim() || 'เสียงของฉัน';
-  const ref = $('#cloneRef').value.trim();
-  if (!ref) toast('แนะนำให้พิมพ์ข้อความที่พูดในคลิป เสียงจะเหมือนขึ้นมาก');
-  const rec = {id: 'c' + Date.now(), name, refText: ref, blob: recBlob, created: Date.now(), tested: false};
+  const gender = $('#cloneGender .chip.on')?.dataset.v || 'm';
+  const rec = {id: 'c' + Date.now(), name, refText: '', gender, blob: recBlob, created: Date.now(), tested: false};
   await db.put('clones', rec); clones.unshift(rec); renderClones(); renderVoice();
   testClone(rec);
 };
 async function testClone(rec){
   const b = $('#btnCloneSave'), hint = $('#cloneHint'), out = $('#cloneOut');
-  b.disabled = true; hint.innerHTML = '<span class="spin" style="display:inline-block;width:14px;height:14px;border-width:2px;vertical-align:-2px;margin-right:6px"></span>กำลังสร้างเสียงทดสอบบน Hugging Face… (อาจรอคิวหลายนาที)';
-  const sample = /[฀-๿]/.test(rec.refText || 'ไทย') ? 'สวัสดีค่ะ นี่คือเสียงที่สร้างจากตัวอย่างของฉัน ฟังดูเหมือนไหม' : 'Hello, this is my cloned voice. Does it sound like me?';
+  if (!MAC.on){ hint.innerHTML = 'บันทึกเสียงไว้แล้ว — <a href="#" id="cMac">เชื่อม Mac</a> เพื่อทดสอบและใช้งาน (OpenVoice รันบน Mac)'; $('#cMac').onclick = e => { e.preventDefault(); openProc(); }; return; }
+  b.disabled = true; hint.innerHTML = '<span class="spin" style="display:inline-block;width:14px;height:14px;border-width:2px;vertical-align:-2px;margin-right:6px"></span>กำลังสร้างเสียงทดสอบบน Mac…';
+  const sample = S.lang === 'en' ? 'Hello, this is my voice made on my own computer. Does it sound like me?' : 'สวัสดีครับ นี่คือเสียงที่สร้างจากตัวอย่างของฉันบนเครื่องของฉันเอง ฟังดูเหมือนไหม';
   try {
     const blob = await cloneTTS(sample, rec);
     out.src = URL.createObjectURL(blob); out.hidden = false; out.play().catch(()=>{});
@@ -1498,7 +1229,7 @@ async function testClone(rec){
 function renderClones(){
   const box = $('#cloneList');
   box.innerHTML = clones.length ? clones.map(c => `<div class="item" data-id="${c.id}"><span class="ib"><svg class="i"><use href="#i-mic"/></svg></span>
-    <div class="t"><b>${esc(c.name)} ${c.tested ? '<span class="tag ok">ใช้ได้</span>' : '<span class="tag warn">ยังไม่ทดสอบ</span>'}</b><small>${esc(c.refText || 'ไม่มีข้อความอ้างอิง')}</small></div>
+    <div class="t"><b>${esc(c.name)} ${c.tested ? '<span class="tag ok">ใช้ได้</span>' : '<span class="tag warn">ยังไม่ทดสอบ</span>'}</b><small>${c.gender === 'f' ? 'เสียงผู้หญิง' : 'เสียงผู้ชาย'} · ${new Date(c.created).toLocaleDateString('th-TH')}</small></div>
     <button class="ib" data-play aria-label="ฟังต้นแบบ"><svg class="i"><use href="#i-play"/></svg></button>
     <button class="ib" data-test aria-label="ทดสอบ"><svg class="i"><use href="#i-refresh"/></svg></button>
     <button class="ib" data-use aria-label="ใช้เสียงนี้"><svg class="i"><use href="#i-vol"/></svg></button>
@@ -1524,20 +1255,19 @@ function chips(box, opts, cur, onPick){
   box.innerHTML = opts.map(o => `<button class="chip ${o[0] == cur ? 'on' : ''}" data-v="${o[0]}">${o[1]}</button>`).join('');
   box.querySelectorAll('.chip').forEach(b => b.onclick = () => { box.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset.v); save(); });
 }
-renderEngines();
 chips($('#imgStyle'), IMG_STYLES, S.imgStyle, v => S.imgStyle = v);
 chips($('#imgRatio'), RATIOS.map(r => [r[0], r[0]]), S.imgRatio, v => S.imgRatio = v);
 chips($('#imgCount'), [[1,'1 ภาพ'],[2,'2 ภาพ'],[3,'3 ภาพ'],[4,'4 ภาพ']], S.imgCount, v => { S.imgCount = +v; $('#imgGrid').classList.toggle('one', S.imgCount === 1); });
-$('#imgEnhance').checked = S.imgEnhance; $('#imgEnhance').onchange = e => { S.imgEnhance = e.target.checked; save(); };
 $('#imgPrompt').value = LS.get('imgPrompt', '');
 $('#imgPrompt').oninput = e => LS.set('imgPrompt', e.target.value);
 $('#btnImgFromText').onclick = () => { const t = ta.value.trim(); if (!t) return toast('หน้าแปลงเสียงยังไม่มีข้อความ'); $('#imgPrompt').value = t.slice(0, 600); LS.set('imgPrompt', t.slice(0, 600)); toast('นำข้อความมาใช้แล้ว'); };
-function imgUrl(prompt, seed, free){
-  const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2], [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
-  const p = encodeURIComponent(prompt + (st ? ', ' + st : ''));
-  const q = `width=${w}&height=${h}&seed=${seed}&model=flux&nologo=true` + (S.imgEnhance ? '&enhance=true' : '');
-  return (S.polKey && !free) ? `https://gen.pollinations.ai/image/${p}?${q}&key=${encodeURIComponent(S.polKey)}` : `https://image.pollinations.ai/prompt/${p}?${q}`;
+function imgPrompt(prompt){ const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2]; return prompt + (st ? ', ' + st : ''); }
+function renderImgEngine(){
+  const box = $('#imgEngine'); if (!box) return;
+  const cur = S.macImg || MAC.info?.img_engine || 'flux';
+  chips(box, [['flux', '💼 FLUX.1-schnell · คมชัด'], ['vega', '💼 Segmind-Vega · เร็ว']], cur, async v => { S.macImg = v; save(); renderEst(); try { await MAC.json('/api/settings', {img_engine: v}); MAC.refresh(); } catch(e){} });
 }
+renderImgEngine();
 let imgBusy = false;
 function loadImg(url, ms = 120000){
   return new Promise((res, rej) => { const im = new Image(); const t = setTimeout(() => { im.src = ''; rej(new Error('หมดเวลา')); }, ms);
@@ -1549,102 +1279,24 @@ async function shotFile(div, url){
   return div._file = asFile(b, 'genmedi-image');
 }
 function shotActions(div, url, prompt){
-  div.querySelector('[data-dl]').onclick = async () => {
-    try { const f = await shotFile(div, url); saveBlob(f, f.name); } catch(e){ window.open(url, '_blank'); }
-  };
-  div.querySelector('[data-sh]').onclick = async () => {
-    try { await shareFiles([await shotFile(div, url)], prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); }
-  };
+  div.querySelector('[data-dl]').onclick = async () => { try { const f = await shotFile(div, url); saveBlob(f, f.name); } catch(e){ window.open(url, '_blank'); } };
+  div.querySelector('[data-sh]').onclick = async () => { try { await shareFiles([await shotFile(div, url)], prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); } };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
-}
-/* image via Gradio: FLUX.1-schnell on Hugging Face (free, no watermark) or "my computer" (SD-Turbo) */
-const FLUX_SPACE = 'black-forest-labs/FLUX.1-schnell';
-async function gradioImage(target, prompt, seed){
-  const g = await gconnect(target), c = g.client;
-  if (!g.plans.img){
-    const api = await c.view_api();
-    const eps = Object.entries(api.named_endpoints || {}).filter(([n, ep]) => (ep.returns || []).some(r => /image/i.test(r.component || '')));
-    const hit = eps.find(([n]) => /infer|txt2img/i.test(n)) || eps[0];
-    if (!hit) throw new Error('ปลายทางนี้ไม่มีช่องสร้างภาพ');
-    g.plans.img = {name: hit[0], ps: hit[1].parameters || []};
-  }
-  const plan = g.plans.img;
-  const st = IMG_STYLES.find(x => x[0] === S.imgStyle)?.[2], [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
-  const full = prompt + (st ? ', ' + st : '');
-  const args = plan.ps.map(p => {
-    const n = plabel(p);
-    if (/prompt/.test(n) && !/neg/.test(n)) return full;
-    if (/randomize/.test(n)) return false;
-    if (/seed/.test(n)) return seed % 2147483647;
-    if (/width/.test(n)) return w;
-    if (/height/.test(n)) return h;
-    if (/steps/.test(n)) return isUrl(target) ? 2 : 4;
-    if (p.parameter_has_default) return p.parameter_default;
-    return p.example_input ?? null;
-  });
-  let res;
-  try { res = await c.predict(plan.name, args); } catch(e){ throw gradioErr(e, target, 'สร้างภาพ'); }
-  if (!isUrl(target)) Q.clear('hf');
-  const out = (res.data || []).find(x => x && (typeof x === 'string' || x.url || x.path));
-  const url = typeof out === 'string' ? out : out?.url;
-  if (!url) throw new Error('ปลายทางไม่ได้ส่งภาพกลับมา');
-  const r = await fetch(url); if (!r.ok) throw new Error('ดาวน์โหลดภาพไม่ได้ (' + r.status + ')');
-  return r.blob();
-}
-/* Pollinations image: fetch so we can read quota errors; fall back to <img> if CORS blocks */
-async function polImage(prompt, seed, msg){
-  const tryUrl = async (url, k) => {
-    let r; const ac = new AbortController(), t = setTimeout(() => ac.abort(), 120000);
-    try { r = await fetch(url, {signal: ac.signal}); } catch(e){ clearTimeout(t); if (e.name === 'AbortError') throw new Error('หมดเวลา'); const im = await loadImg(url); return {im, url}; }
-    clearTimeout(t);
-    if (!r.ok){
-      const d = await r.text().catch(() => '');
-      if (k === 'pollinations' && (r.status === 402 || /pollen|balance|credit|insufficient/i.test(d))) Q.mark('pollinations', d.slice(0, 200), 0);
-      else if (r.status === 429) Q.mark(k, 'rate limit', +r.headers.get('retry-after') || 60);
-      const e = new Error(r.status === 429 ? quotaText(k) : 'สร้างภาพไม่สำเร็จ (' + r.status + ')'); e.status = r.status; throw e;
-    }
-    Q.clear(k);
-    const blob = await r.blob(), u = URL.createObjectURL(blob);
-    return {im: await loadImg(u), url: u, blob};
-  };
-  if (S.polKey && !Q.hit('pollinations')){
-    try { return await tryUrl(imgUrl(prompt, seed), 'pollinations'); }
-    catch(e){ msg('คีย์ใช้ไม่ได้ (Pollen หมด?) กำลังวาดด้วยโหมดฟรี…'); }
-  }
-  return tryUrl(imgUrl(prompt, seed, true), 'polfree');
 }
 function showShot(div, im, url, prompt, note){
   im.alt = prompt;
-  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button></div>` + (note ? `<div class="ld" style="position:absolute;left:8px;top:8px;padding:3px 8px;background:rgba(6,10,32,.75);border-radius:8px;font-size:11px">${note}</div>` : '');
+  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-download"/></svg></button></div>${note ? `<span class="note">${esc(note)}</span>` : ''}`;
   div.prepend(im); div._file = null; shotActions(div, url, prompt);
-  if (S.serverUrl && S.macSave) shotFile(div, url).then(f => saveToMac(f, 'images', prompt.slice(0, 40))).catch(() => {});
+  if (MAC.on && S.macSave) shotFile(div, url).then(f => saveToMac(f, 'images', prompt.slice(0, 40))).catch(() => {});
 }
 async function renderShot(div, prompt, seed){
-  div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาด…</div>`;
-  const msg = t => { const l = div.querySelector('.ld'); if (l) l.lastChild.textContent = t; };
-  const eng = S.imgEngine, t0 = performance.now();
+  div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาดบน Mac…</div>`;
   try {
-    if (eng === 'flux' || eng === 'server'){
-      const target = eng === 'server' ? S.serverUrl : FLUX_SPACE;
-      try {
-        if (eng === 'flux' && Q.hit('hf')) throw new Error(quotaText('hf'));
-        msg(eng === 'server' ? 'กำลังวาดบนคอมของฉัน…' : 'กำลังวาดด้วย FLUX (รอคิว GPU ฟรี)…');
-        const blob = await gradioImage(target, prompt, seed);
-        SPEED.learn('img-' + eng, performance.now() - t0);
-        const url = URL.createObjectURL(blob);
-        showShot(div, await loadImg(url), url, prompt);
-        addHistory({kind:'image', prompt, blob});
-        return;
-      } catch(e){
-        if (S.commercial) throw new Error(e.message + ' — โหมดเชิงพาณิชย์จะไม่สลับไป Pollinations (ลองใหม่ หรือใช้คอมของฉัน)');
-        toast(e.message + ' — ใช้ Pollinations แทน (อาจมีลายน้ำ)', true);
-        msg('ใช้ตัวสำรอง Pollinations…');
-      }
-    }
-    const r = await polImage(prompt, seed, msg);
-    if (eng === 'pol') SPEED.learn('img-pol', performance.now() - t0);
-    showShot(div, r.im, r.url, prompt, eng !== 'pol' ? 'ตัวสำรอง' : '');
-    addHistory(r.blob ? {kind:'image', prompt, blob: r.blob} : {kind:'image', prompt, url: r.url});
+    const [, w, h] = RATIOS.find(r => r[0] === S.imgRatio) || RATIOS[0];
+    const r = await MAC.image(imgPrompt(prompt), w, h, seed);
+    const url = URL.createObjectURL(r.blob);
+    showShot(div, await loadImg(url), url, prompt);
+    addHistory({kind:'image', prompt, blob: r.blob, lk: 'img-mac'});
   } catch(e){
     div.innerHTML = `<div class="ld">${esc(e.message)}<br><button class="btn sm alt" style="margin-top:8px">ลองใหม่</button></div>`;
     div.querySelector('button').onclick = () => renderShot(div, prompt, seed);
@@ -1652,16 +1304,14 @@ async function renderShot(div, prompt, seed){
 }
 $('#btnImg').onclick = async () => {
   const prompt = $('#imgPrompt').value.trim(); if (!prompt) return toast('พิมพ์คำอธิบายภาพก่อนนะ');
-  if (!allowed('img-' + S.imgEngine)) return toast('โหมดเชิงพาณิชย์: ' + lic('img-' + S.imgEngine).t + ' — เลือก FLUX หรือคอมของฉัน', true);
+  if (!MAC.on) return openProc();
   if (imgBusy) return; imgBusy = true;
   const btn = $('#btnImg'); btn.classList.add('busy'); btn.disabled = true;
   const grid = $('#imgGrid'); grid.innerHTML = ''; grid.classList.toggle('one', S.imgCount === 1);
   const shots = Array.from({length: S.imgCount}, () => { const d = document.createElement('div'); d.className = 'shot'; d.innerHTML = '<div class="ld">รอคิว…</div>'; grid.appendChild(d); return d; });
   const seeds = shots.map(() => Math.floor(Math.random() * 1e9));
-  if (S.imgEngine === 'pol' && S.polKey && !Q.hit('pollinations')) await Promise.all(shots.map((d, i) => renderShot(d, prompt, seeds[i])));
-  else for (let i = 0; i < shots.length; i++){
-    if (i && S.imgEngine === 'pol' && (!S.polKey || Q.hit('pollinations'))){ for (let s = 15; s > 0; s--){ $('#imgStatus').textContent = `โหมดฟรีไม่มีคีย์: รอ ${s} วินาทีก่อนภาพถัดไป`; await sleep(1000); } }
-    $('#imgStatus').textContent = `กำลังวาดภาพที่ ${i+1}/${shots.length}`;
+  for (let i = 0; i < shots.length; i++){
+    $('#imgStatus').textContent = `กำลังวาดภาพที่ ${i+1}/${shots.length} บน Mac`;
     await renderShot(shots[i], prompt, seeds[i]);
   }
   $('#imgStatus').textContent = ''; renderEst(); renderQuota();
@@ -1677,42 +1327,29 @@ $('#btnImg').onclick = async () => {
 
 /* ---------------- boot ---------------- */
 try {
-  const qs = new URLSearchParams(location.search), sv = qs.get('server');
-  if (sv && isUrl(sv)){
-    S.serverUrl = sv.replace(/\/+$/, ''); S.cloneEngine = S.commercial ? 'openvoice' : 'server'; S.imgEngine = 'server'; save();
-    history.replaceState(null, '', location.pathname + location.hash);
-    setTimeout(() => { toast('เชื่อมกับคอมของฉันแล้ว — โคลนเสียงและสร้างภาพจะใช้คอมเครื่องนั้น'); serverInfo().then(renderEst).catch(e => toast(e.message, true)); }, 600);
+  const qs = new URLSearchParams(location.search), sv = qs.get('server'), tk = qs.get('t');
+  if (tk) S.macToken = tk;
+  if (sv && isUrl(sv)){ S.serverUrl = sv.replace(/\/+$/, ''); S.imgEngine = 'mac'; if (!S.voice || S.voice.type === 'device') S.voice = {type:'mac', id:'Linda'}; }
+  if (sv || tk){
+    save(); history.replaceState(null, '', location.pathname + location.hash);
+    setTimeout(() => { toast('เชื่อม Mac แล้ว — เสียงพากย์ 💼 และสร้างภาพจะประมวลผลบน Mac'); MAC.refresh(); }, 500);
   }
+  if (SAME_ORIGIN && (!S.voice || S.voice.type === 'device')){ S.voice = {type:'mac', id:'Linda'}; save(); }
+  if (MAC.local && !LS.get('macIntro', false)){ LS.set('macIntro', true); setTimeout(openProc, 1500); }
 } catch(e){}
 enforceCommercial();
-onText(); renderVoice(); ui(); renderEngines(); renderQuota();
-if ((S.gKey && !gVoices) || (S.azKey && !azVoices)) loadCloudVoices();
-/* image generation helper for the studio: returns {blob, lk} using the current engine, honouring commercial mode */
+onText(); renderVoice(); ui(); renderQuota();
+/* image generation helper for the studio: returns {blob, lk} — always on the Mac */
 async function genImage(prompt, ratio){
-  const keep = S.imgRatio; if (ratio) S.imgRatio = ratio;
-  const seed = Math.floor(Math.random() * 1e9);
-  try {
-    const eng = S.imgEngine;
-    if (eng === 'flux' || eng === 'server'){
-      try {
-        if (eng === 'flux' && Q.hit('hf')) throw new Error(quotaText('hf'));
-        const blob = await gradioImage(eng === 'server' ? S.serverUrl : FLUX_SPACE, prompt, seed);
-        addHistory({kind:'image', prompt, blob});
-        return {blob, lk: 'img-' + eng};
-      } catch(e){ if (S.commercial) throw e; }
-    }
-    if (S.commercial) throw new Error('โหมดเชิงพาณิชย์: ' + lic('img-' + eng).t);
-    const r = await polImage(prompt, seed, () => {});
-    const blob = r.blob || await (await fetch(r.url)).blob();
-    addHistory({kind:'image', prompt, blob});
-    return {blob, lk: 'img-pol'};
-  } finally { S.imgRatio = keep; }
+  const [, w, h] = RATIOS.find(r => r[0] === (ratio || S.imgRatio)) || RATIOS[0];
+  const r = await MAC.image(imgPrompt(prompt), w, h, Math.floor(Math.random() * 1e9));
+  addHistory({kind:'image', prompt, blob: r.blob, lk: 'img-mac'});
+  return {blob: r.blob, lk: 'img-mac'};
 }
 /* public API used by studio.js */
 window.GM = { srcGenderOf, openVoiceFx, S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
   curVoice, synthesize, makeChunks, mergeAudio, decode, encodeWav, genImage, allowed, lic, licTag, voiceLicKey, go, status, effRate,
-  RATIOS, IMG_STYLES, openSettings, openProc, renderEst, gconnect, isUrl, getSpec, fmtDur, SPEED, gradio: () => gradio,
-  get serverInfo(){ return SERVER_INFO; }, ta };
+  RATIOS, IMG_STYLES, openSettings, openProc, renderEst, isUrl, getSpec, fmtDur, SPEED, MAC, ta };
 window.dispatchEvent(new Event('gm:ready'));
 const h0 = location.hash.slice(1); go(PAGES[h0] ? h0 : 'home');
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });
