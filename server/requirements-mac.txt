@@ -1,0 +1,28 @@
+# Gen Medi for Mac — installed automatically on first launch (Apple Silicon, Python 3.11)
+fastapi
+uvicorn
+python-multipart
+coqui-tts[codec]
+torch
+torchaudio
+six
+soundfile
+librosa
+huggingface_hub
+mflux==0.6.2
+diffusers
+transformers
+accelerate
+peft
+safetensors
+sentencepiece
+qrcode
+psutil
+imageio-ffmpeg
+# OpenVoice V2 runtime deps (OpenVoice itself is installed with --no-deps)
+unidecode
+eng_to_ipa
+inflect
+cn2an
+pypinyin
+jieba
