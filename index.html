@@ -75,29 +75,56 @@
       <small>วางบท แล้วแอปสร้างเสียงพากย์ ภาพประกอบ ซับไตเติล และตัดต่อเป็นวิดีโอพร้อมลง TikTok · Reels · Shorts · YouTube</small>
       <span class="hero-go">เริ่มสร้าง →</span>
     </button>
-    <div class="cats">
-      <button class="cat" data-home="tts"><span class="ci" style="--c1:#22d3ee;--c2:#6366f1">🎙️</span><b>เสียงพากย์</b><small>ข้อความ → เสียง</small></button>
-      <button class="cat" data-home="clone"><span class="ci" style="--c1:#a855f7;--c2:#ec4899">🧬</span><b>โคลนเสียง</b><small>เสียงของคุณเอง</small></button>
-      <button class="cat" data-home="image"><span class="ci" style="--c1:#f59e0b;--c2:#ef4444">🖼️</span><b>สร้างภาพ</b><small>ข้อความ → ภาพ</small></button>
-      <button class="cat" data-home="studio"><span class="ci" style="--c1:#10b981;--c2:#3b82f6">🎬</span><b>สตูดิโอวิดีโอ</b><small>ภาพ + เสียงพากย์ + ซับ</small></button>
-      <a class="cat" href="editor/" style="text-decoration:none;color:inherit"><span class="ci" style="--c1:#0ea5e9;--c2:#22c55e">✂️</span><b>ตัดต่อคลิป Pro</b><small>ตัด แบ่ง ฟิลเตอร์ สติกเกอร์</small></a>
-      <button class="cat" data-home="export"><span class="ci" style="--c1:#ec4899;--c2:#f97316">🚀</span><b>ส่งออกแพลตฟอร์ม</b><small>TikTok · YouTube · IG</small></button>
-      <button class="cat" data-home="vfx"><span class="ci" style="--c1:#f43f5e;--c2:#8b5cf6">🎭</span><b>เปลี่ยนเสียง</b><small>ชาย/หญิง/เด็ก · หุ่นยนต์ · โทรโข่ง</small></button>
-      <button class="cat" data-home="sfx"><span class="ci" style="--c1:#06b6d4;--c2:#a3e635">🔔</span><b>เสียงประกอบ SFX</b><small>ข้อความ → เสียง</small></button>
-      <button class="cat" data-home="video"><span class="ci" style="--c1:#06b6d4;--c2:#6366f1">🎥</span><b>ข้อความ → วิดีโอ</b><small>สร้างคลิปด้วย GPU ของ Mac</small></button>
-      <button class="cat" data-home="cover"><span class="ci" style="--c1:#f97316;--c2:#eab308">🎸</span><b>คัฟเวอร์ / ไลฟ์</b><small>แกะคอร์ด → เล่นใหม่แบบร้านดนตรีสด</small></button>
-      <button class="cat" data-home="music"><span class="ci" style="--c1:#8b5cf6;--c2:#f43f5e">🎼</span><b>เพลงประกอบ</b><small>แต่งใหม่ ไม่ติดลิขสิทธิ์</small></button>
-      <button class="cat" data-home="history"><span class="ci" style="--c1:#64748b;--c2:#6366f1">🗂️</span><b>คลังงาน</b><small>ประวัติ & ไฟล์</small></button>
-    </div>
+    <div class="macbar" id="macBar"></div>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">✍️</span><div><h3>ไอเดีย & บท</h3><small>ให้ AI บน Mac คิดบท ฮุก แคปชัน</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="writer"><span class="ci" style="--c1:#f59e0b;--c2:#ec4899">✍️</span><b>เขียนบท</b><small>บทพากย์ทั้งคลิป</small></button>
+        <button class="tile" data-home="writer:hook"><span class="ci" style="--c1:#22d3ee;--c2:#6366f1">🎣</span><b>ฮุก 3 วิ</b><small>6 แบบให้เลือก</small></button>
+        <button class="tile" data-home="writer:tags"><span class="ci" style="--c1:#a855f7;--c2:#22d3ee">#️⃣</span><b>แคปชัน</b><small>+ แฮชแท็ก</small></button>
+      </div></section>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">🎙️</span><div><h3>เสียง</h3><small>พากย์ · เสียงตัวเอง · แปลงเสียง · ถอดเสียง</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="tts"><span class="ci" style="--c1:#22d3ee;--c2:#6366f1">🎙️</span><b>เสียงพากย์</b><small>ข้อความ → เสียง</small></button>
+        <button class="tile" data-home="clone"><span class="ci" style="--c1:#a855f7;--c2:#ec4899">🧬</span><b>เสียงของฉัน</b><small>อัด 10 วิ</small></button>
+        <button class="tile" data-home="vfx"><span class="ci" style="--c1:#f43f5e;--c2:#8b5cf6">🎭</span><b>เปลี่ยนเสียง</b><small>เพศ · วัย · เอฟเฟกต์</small></button>
+        <button class="tile" data-home="stt"><span class="ci" style="--c1:#10b981;--c2:#22d3ee">📝</span><b>ถอดเสียง</b><small>คลิป → ซับ</small></button>
+      </div></section>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">🖼️</span><div><h3>ภาพ</h3><small>สร้าง · ลบพื้นหลัง · ขยาย</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="image"><span class="ci" style="--c1:#f59e0b;--c2:#ef4444">🖼️</span><b>สร้างภาพ</b><small>ข้อความ → ภาพ</small></button>
+        <button class="tile" data-home="imgtools"><span class="ci" style="--c1:#ec4899;--c2:#f97316">✂️</span><b>ลบพื้นหลัง</b><small>ภาพสินค้า/คน</small></button>
+        <button class="tile" data-home="imgtools:up"><span class="ci" style="--c1:#0ea5e9;--c2:#22c55e">🔍</span><b>ขยายภาพ AI</b><small>x2 · x4</small></button>
+      </div></section>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">🎬</span><div><h3>วิดีโอ</h3><small>สร้างคลิป AI · ตัดต่อ · ส่งออก</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="video"><span class="ci" style="--c1:#06b6d4;--c2:#6366f1">🎥</span><b>ข้อความ → วิดีโอ</b><small>คลิป AI บน Mac</small></button>
+        <button class="tile" data-home="video:img"><span class="ci" style="--c1:#8b5cf6;--c2:#06b6d4">🌄</span><b>ภาพ → วิดีโอ</b><small>ทำภาพให้ขยับ</small></button>
+        <button class="tile" data-home="studio"><span class="ci" style="--c1:#10b981;--c2:#3b82f6">🎬</span><b>สตูดิโอ</b><small>ภาพ/คลิป + เสียง + ซับ</small></button>
+        <button class="tile" data-home="export"><span class="ci" style="--c1:#ec4899;--c2:#f97316">🚀</span><b>ส่งออก</b><small>TikTok · YouTube · IG</small></button>
+        <a class="tile" href="editor/"><span class="ci" style="--c1:#0ea5e9;--c2:#22c55e">✂️</span><b>ตัดต่อ Pro</b><small>ตัด แบ่ง ฟิลเตอร์</small></a>
+      </div></section>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">🎵</span><div><h3>ดนตรี & เสียงประกอบ</h3><small>คัฟเวอร์ · เพลงประกอบ · SFX</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="cover"><span class="ci" style="--c1:#f97316;--c2:#eab308">🎸</span><b>คัฟเวอร์ / ไลฟ์</b><small>แกะคอร์ด เล่นใหม่</small></button>
+        <button class="tile" data-home="music"><span class="ci" style="--c1:#8b5cf6;--c2:#f43f5e">🎼</span><b>เพลงประกอบ</b><small>แต่งใหม่ ไม่ติดลิขสิทธิ์</small></button>
+        <button class="tile" data-home="sfx"><span class="ci" style="--c1:#06b6d4;--c2:#a3e635">🔔</span><b>เสียงประกอบ</b><small>ข้อความ → SFX</small></button>
+      </div></section>
+    <section class="hsec"><div class="hsec-h"><span class="hsec-i">🗂️</span><div><h3>งานของฉัน & ระบบ</h3><small>คิวงาน · คลังงาน · การเชื่อมต่อ</small></div></div>
+      <div class="tiles">
+        <button class="tile" data-home="jobs"><span class="ci" style="--c1:#64748b;--c2:#22d3ee">🧾</span><b>คิวงาน Mac</b><small>งานที่สั่งไว้</small></button>
+        <button class="tile" data-home="history"><span class="ci" style="--c1:#64748b;--c2:#6366f1">🗂️</span><b>คลังงาน</b><small>ไฟล์ที่สร้างแล้ว</small></button>
+        <button class="tile" data-home="proc"><span class="ci" style="--c1:#334155;--c2:#6366f1">💻</span><b>เชื่อมต่อ Mac</b><small>QR · โมเดล · โฟลเดอร์</small></button>
+        <button class="tile" data-home="about"><span class="ci" style="--c1:#334155;--c2:#8b5cf6">📖</span><b>วิธีใช้ & ข้อจำกัด</b><small>ทำอะไรได้บ้าง</small></button>
+      </div></section>
     <div class="card" id="homeProjects"><div class="card-h"><h2>🎞️ โปรเจกต์ล่าสุด</h2><button class="ghost" id="homeNewProj">＋ ใหม่</button></div><div id="homeProjList"><p class="hint">ยังไม่มีโปรเจกต์ — กด “บท → วิดีโอ” หรือ “ตัดต่อวิดีโอ” เพื่อเริ่ม</p></div></div>
-    <div class="row2" style="margin-bottom:14px">
-      <button class="btn alt" style="flex:1" data-home="proc">💻 เชื่อมต่อ Mac</button>
-      <button class="btn alt" style="flex:1" data-home="about">📖 ทำอะไรได้ / ข้อจำกัด</button>
-    </div>
   </section>
 
   <!-- ============ STUDIO ============ -->
   <section class="page" data-page="studio"><div id="studioRoot"><p class="hint">กำลังโหลดห้องตัดต่อ…</p></div></section>
+  <section class="page" data-page="writer"><div id="writerRoot"></div></section>
+  <section class="page" data-page="stt"><div id="sttRoot"></div></section>
+  <section class="page" data-page="imgtools"><div id="imgtoolsRoot"></div></section>
+  <section class="page" data-page="jobs"><div id="jobsRoot"></div></section>
   <section class="page" data-page="video"><div id="videoRoot"><p class="hint">กำลังโหลด…</p></div></section>
   <section class="page" data-page="cover"><div id="coverRoot"><p class="hint">กำลังโหลด…</p></div></section>
 
@@ -257,25 +284,35 @@
 
 <nav class="tabbar" id="tabbar">
   <button data-tab2="home"><span>🏠</span>หน้าหลัก</button>
+  <button data-tab2="writer"><span>✍️</span>บท</button>
   <button data-tab2="tts"><span>🎙️</span>เสียง</button>
-  <button data-tab2="image"><span>🖼️</span>ภาพ</button>
+  <button data-tab2="video"><span>🎥</span>วิดีโอ</button>
   <button data-tab2="studio"><span>🎬</span>ตัดต่อ</button>
-  <button data-tab2="clone"><span>🧬</span>โคลน</button>
 </nav>
 <div class="scrim" id="scrim"></div>
 <nav class="drawer" id="drawer">
   <h3><img src="logo.svg" alt="" style="width:34px;height:34px;vertical-align:-9px;margin-right:8px">GEN MEDI</h3>
-  <button class="nav on" data-go="home"><svg class="i"><use href="#i-menu"/></svg><div>หน้าหลัก<small>หมวดหมู่ทั้งหมด</small></div></button>
-  <button class="nav" data-go="studio"><svg class="i"><use href="#i-play"/></svg><div>สตูดิโอวิดีโอ (บท → วิดีโอ)<small>ภาพ + เสียงพากย์ + ซับ + SFX → MP4</small></div></button>
-  <button class="nav" data-go="tts"><svg class="i"><use href="#i-vol"/></svg><div>แปลงข้อความเป็นเสียง<small>อ่านยาวต่อเนื่อง ดาวน์โหลดได้</small></div></button>
-  <button class="nav" data-go="clone"><svg class="i"><use href="#i-mic"/></svg><div>โคลนเสียง<small>สร้างเสียงจากคลิปตัวอย่าง</small></div></button>
-  <button class="nav" data-go="image"><svg class="i"><use href="#i-image"/></svg><div>ข้อความเป็นรูปภาพ<small>สร้างภาพบน Mac ของคุณ</small></div></button>
-  <a class="nav" href="editor/"><svg class="i"><use href="#i-cut"/></svg><div>ตัดต่อคลิป Pro<small>Auto / Manual · ตัด แบ่ง ฟิลเตอร์ สติกเกอร์</small></div></a>
-  <button class="nav" data-act="history"><svg class="i"><use href="#i-hist"/></svg><div>ประวัติการใช้งาน</div></button>
-  <button class="nav" data-act="proc"><svg class="i"><use href="#i-sliders"/></svg><div>เชื่อมต่อ Mac & ประมวลผล<small>มือถือ · Mac · มือถือสั่ง Mac</small></div></button>
-  <button class="nav" data-act="settings"><svg class="i"><use href="#i-gear"/></svg><div>ตั้งค่า</div></button>
-  <button class="nav" data-act="install"><svg class="i"><use href="#i-down"/></svg><div>ติดตั้งเป็นแอป (Android / Mac)</div></button>
-  <button class="nav" data-act="about"><svg class="i"><use href="#i-info"/></svg><div>ทำอะไรได้ / ข้อจำกัด</div></button>
+  <button class="nav" data-go="home"><span class="nic">🏠</span><div>หน้าหลัก<small>หมวดหมู่ทั้งหมด</small></div></button>
+  <div class="navh">ไอเดีย & เสียง</div>
+  <button class="nav" data-go="writer"><span class="nic">✍️</span><div>ผู้ช่วยเขียนบท</div></button>
+  <button class="nav" data-go="tts"><span class="nic">🎙️</span><div>เสียงพากย์</div></button>
+  <button class="nav" data-go="clone"><span class="nic">🧬</span><div>เสียงของฉัน</div></button>
+  <button class="nav" data-go="stt"><span class="nic">📝</span><div>ถอดเสียงเป็นซับ</div></button>
+  <div class="navh">ภาพ & วิดีโอ</div>
+  <button class="nav" data-go="image"><span class="nic">🖼️</span><div>สร้างภาพ</div></button>
+  <button class="nav" data-go="imgtools"><span class="nic">✂️</span><div>ลบพื้นหลัง / ขยายภาพ</div></button>
+  <button class="nav" data-go="video"><span class="nic">🎥</span><div>ข้อความ/ภาพ → วิดีโอ</div></button>
+  <button class="nav" data-go="studio"><span class="nic">🎬</span><div>สตูดิโอวิดีโอ</div></button>
+  <a class="nav" href="editor/"><span class="nic">✂️</span><div>ตัดต่อคลิป Pro</div></a>
+  <div class="navh">ดนตรี</div>
+  <button class="nav" data-go="cover"><span class="nic">🎸</span><div>คัฟเวอร์ / ไลฟ์</div></button>
+  <div class="navh">ระบบ</div>
+  <button class="nav" data-go="jobs"><span class="nic">🧾</span><div>คิวงานบน Mac</div></button>
+  <button class="nav" data-act="history"><span class="nic">🗂️</span><div>คลังงาน</div></button>
+  <button class="nav" data-act="proc"><span class="nic">💻</span><div>เชื่อมต่อ Mac & ประมวลผล</div></button>
+  <button class="nav" data-act="settings"><span class="nic">⚙️</span><div>ตั้งค่า</div></button>
+  <button class="nav" data-act="install"><span class="nic">⬇️</span><div>ติดตั้งเป็นแอป</div></button>
+  <button class="nav" data-act="about"><span class="nic">📖</span><div>ทำอะไรได้ / ข้อจำกัด</div></button>
 </nav>
 <div class="sheet" id="sheet"><div class="grab"></div><div id="sheetBody"></div></div>
 <div class="toast" id="toast"></div>
@@ -286,5 +323,6 @@
 <script type="module" src="studio.js"></script>
 <script type="module" src="cover.js"></script>
 <script type="module" src="video.js"></script>
+<script type="module" src="tools.js"></script>
 </body>
 </html>

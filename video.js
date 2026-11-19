@@ -8,7 +8,7 @@ const UPS = [['none', 'ขนาดเดิม'], ['720', '⬆️ 720p'], ['108
 const LENS = [[2, '2 วิ'], [3, '3 วิ'], [5, '5 วิ']];
 const STYLES = [['none', 'ไม่ระบุ', ''], ['cine', '🎞️ ภาพยนตร์', ', cinematic lighting, film grain, shallow depth of field, smooth camera movement'], ['real', '📷 สมจริง', ', photorealistic, natural light, high detail'], ['anime', '🌸 อนิเมะ', ', anime style, vibrant colors, clean lines'], ['3d', '🧸 3D', ', 3D render, pixar style, soft lighting'], ['drone', '🚁 โดรน', ', aerial drone shot, sweeping camera motion']];
 const st = Object.assign({ mode: 'standard', sec: 3, portrait: true, style: 'cine', up: '1080' }, GM.LS.get('vidSet', {}));
-let job = null, timer = null;
+let job = null, timer = null, srcImg = null;
 const saveSt = () => GM.LS.set('vidSet', st);
 const fmt = s => s == null ? '?' : s < 60 ? Math.round(s) + ' วินาที' : Math.round(s / 60) + ' นาที';
 
@@ -28,16 +28,19 @@ function render(){
   const mac = GM.MAC, i = mac.info || {};
   const m = i.models?.video;
   root.innerHTML = `
-  <div class="card"><div class="card-h"><h2>🎥 ข้อความ → วิดีโอ</h2></div>
+  <div class="card"><div class="card-h"><h2>🎥 ${st.src === 'img' ? 'ภาพ → วิดีโอ' : 'ข้อความ → วิดีโอ'}</h2></div>
+    ${chips([['text', '✏️ จากข้อความ'], ['img', '🖼️ จากภาพ (ทำให้ภาพขยับ)']], st.src || 'text', 'src')}
     <p class="hint" style="margin-top:0">สร้างคลิปสั้นจากคำบรรยายบน GPU ของ Mac — โมเดล Wan2.1 T2V 1.3B (Apache-2.0 ใช้หารายได้ได้) · ไม่ใช้ API · ไม่มีลายน้ำ</p>
     ${!mac.on ? `<div class="lim">ต้องเชื่อม Mac ก่อน <button class="btn sm" id="vMac" style="margin-left:6px">เชื่อมต่อ Mac</button></div>` : ''}
     ${mac.on && i.video_ok === false ? `<div class="lim">Mac เครื่องนี้มี RAM ${i.ram_gb}GB — วิดีโอต้องใช้ 16GB ขึ้นไป</div>` : ''}
     ${m && m.state !== 'ready' ? `<p class="hint">โมเดลวิดีโอบน Mac: ${m.state === 'downloading' ? 'กำลังดาวน์โหลด ' + (m.pct || 0) + '% (~20GB ครั้งแรกครั้งเดียว)' : m.state === 'error' ? 'ดาวน์โหลดผิดพลาด' : 'ยังไม่ได้ดาวน์โหลด (~20GB) — จะเริ่มโหลดเมื่อกดสร้างครั้งแรก'}</p>` : ''}
-    <label class="lbl2">คำบรรยายฉาก (ภาษาอังกฤษได้ผลดีที่สุด)</label>
+    ${st.src === 'img' ? `<label class="lbl2">ภาพต้นฉบับ</label><div class="row2"><label class="btn alt" style="flex:1;text-align:center">📁 เลือกภาพ<input type="file" id="vImg" accept="image/*" hidden></label><button class="btn alt" style="flex:1" id="vImgLast">🖼️ ภาพล่าสุดในคลัง</button></div><div id="vImgPrev" style="margin-top:8px"></div>
+      <p class="hint">ใช้ Wan2.2 5B (Apache-2.0) ผ่าน MLX · ต้องใช้ Mac RAM 32GB ขึ้นไป · Mac 32GB ได้คลิปสั้นมาก (~0.7 วิ) แนะนำเลือกอัปสเกล 1080p</p>` : ''}
+    <label class="lbl2">${st.src === 'img' ? 'อยากให้ภาพขยับแบบไหน (ไม่บังคับ)' : 'คำบรรยายฉาก (ภาษาอังกฤษได้ผลดีที่สุด)'}</label>
     <textarea class="inp" id="vPrompt" style="height:110px;padding:12px" placeholder="เช่น A golden retriever running on a beach at sunset, waves splashing, slow motion">${esc(st.prompt || '')}</textarea>
     <label class="lbl2">สไตล์</label>${chips(STYLES, st.style, 'style')}
-    <label class="lbl2">คุณภาพ</label>${chips(MODES, st.mode, 'mode')}
-    <p class="hint" style="margin-top:4px">${esc(MODES.find(x => x[0] === st.mode)[2])}</p>
+    ${st.src === 'img' ? '' : `<label class="lbl2">คุณภาพ</label>${chips(MODES, st.mode, 'mode')}
+    <p class="hint" style="margin-top:4px">${esc(MODES.find(x => x[0] === st.mode)[2])}</p>`}
     <label class="lbl2">ขยายไฟล์ตอนจบ (อัปสเกล + ทำภาพลื่น 30fps)</label>${chips(UPS, st.up, 'up')}
     <p class="hint" style="margin-top:4px">อัปสเกลช่วยให้ไฟล์ได้ขนาด HD สำหรับ TikTok/YouTube ภาพคมขึ้นเล็กน้อย แต่รายละเอียดไม่เท่าการสร้างที่ความละเอียดนั้นจริง</p>
     <label class="lbl2">ความยาว / สัดส่วน</label>${chips(LENS, st.sec, 'sec')}${chips([[1, '📱 แนวตั้ง 9:16'], [0, '🖥️ แนวนอน 16:9']], st.portrait ? 1 : 0, 'portrait')}
@@ -50,21 +53,32 @@ function render(){
   root.querySelectorAll('.chips[data-k]').forEach(c => c.querySelectorAll('.chip').forEach(b => b.onclick = () => {
     const k = c.dataset.k; let v = b.dataset.v; if (k === 'sec') v = +v; if (k === 'portrait') v = v === '1';
     st[k] = v; saveSt(); c.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b));
-    if (k === 'mode') render(); else { const e = root.querySelector('#vEst'); if (e && mac.on) e.textContent = estimate(); }
+    if (k === 'mode' || k === 'src') render(); else { const e = root.querySelector('#vEst'); if (e && mac.on) e.textContent = estimate(); }
   }));
   root.querySelector('#vPrompt').oninput = e => { st.prompt = e.target.value; saveSt(); };
   root.querySelector('#vGo').onclick = start;
+  const showImg = () => { const b = root.querySelector('#vImgPrev'); if (b && srcImg) b.innerHTML = `<img src="${URL.createObjectURL(srcImg)}" style="width:100%;max-height:240px;object-fit:contain;border-radius:12px;background:#111">`; };
+  root.querySelector('#vImg')?.addEventListener('change', e => { srcImg = e.target.files[0] || srcImg; showImg(); });
+  root.querySelector('#vImgLast')?.addEventListener('click', async () => { const h = (await GM.db.all('history')).filter(x => x.kind === 'image' && x.blob).sort((a, b) => b.created - a.created)[0]; if (!h) return toast('ยังไม่มีภาพในคลังงาน'); srcImg = h.blob; showImg(); });
+  showImg();
   if (job) showJob();
 }
 async function start(){
   const prompt = (st.prompt || '').trim();
-  if (!prompt) return toast('พิมพ์คำบรรยายฉากก่อนนะ');
+  if (st.src === 'img'){
+    if (!srcImg) return toast('เลือกภาพก่อนนะ');
+  } else if (!prompt) return toast('พิมพ์คำบรรยายฉากก่อนนะ');
   if (!GM.MAC.on) return GM.openProc();
-  if (job && ['queued', 'loading', 'running'].includes(job.state)) return toast('กำลังสร้างคลิปอยู่ — รอให้เสร็จก่อน');
+  if (job && ['queued', 'loading', 'running'].includes(job.state) && !confirm('มีคลิปที่กำลังสร้างอยู่ — สั่งคลิปใหม่เข้าคิวต่อเลยไหม? (คลิปเดิมดูได้ที่ “คิวงาน”)')) return;
   const full = prompt + (STYLES.find(s => s[0] === st.style)?.[2] || '');
   const btn = root.querySelector('#vGo'); btn.disabled = true;
   try {
-    const r = await (await GM.MAC.json('/api/txt2video', { prompt: full, mode: st.mode, seconds: st.sec, portrait: st.portrait, upscale: st.up === 'none' ? null : st.up }, 60000)).json();
+    let r;
+    if (st.src === 'img'){
+      const fd = new FormData(); fd.append('image', srcImg, srcImg.name || 'image.png'); fd.append('prompt', prompt ? full : ''); fd.append('seconds', st.sec); fd.append('portrait', st.portrait); fd.append('upscale', st.up === 'none' ? '' : st.up);
+      r = await (await GM.MAC.call('/api/img2video', { method: 'POST', body: fd }, 120000)).json();
+    } else r = await (await GM.MAC.json('/api/txt2video', { prompt: full, mode: st.mode, seconds: st.sec, portrait: st.portrait, upscale: st.up === 'none' ? null : st.up }, 60000)).json();
+    if (r.pos > 1) toast(`เข้าคิวแล้ว (ลำดับที่ ${r.pos}) — ดูได้ที่ “คิวงาน”`);
     job = { id: r.job, state: 'queued', prompt }; GM.LS.set('vidJob', job.id);
     poll();
   } catch(e){ toast(e.message, true); GM.MAC.refresh().then(render); }
@@ -96,7 +110,7 @@ function showJob(){
   }
   const pct = job.total ? Math.round((job.step || 0) * 100 / job.total) : 0;
   box.innerHTML = job.state === 'error' ? `<p class="lim">สร้างไม่สำเร็จ: ${esc(job.msg || '')}</p>`
-    : `<div class="prog2"><i style="width:${Math.max(3, pct)}%"></i></div><p class="hint">${esc(job.msg || '')}${job.state === 'running' ? ` · สเต็ป ${job.step || 0}/${job.total} · เหลือ ~${fmt(job.eta)}` : ''}</p><button class="btn sm alt" id="vCancel">ยกเลิก</button>`;
+    : `<div class="prog2"><i style="width:${Math.max(3, pct)}%"></i></div><p class="hint">${job.state === 'queued' && job.pos ? `รอคิวลำดับที่ ${job.pos} · ` : ''}${esc(job.msg || '')}${job.state === 'running' ? ` · สเต็ป ${job.step || 0}/${job.total} · เหลือ ~${fmt(job.eta)}` : ''}</p><button class="btn sm alt" id="vCancel">ยกเลิก</button>`;
   box.querySelector('#vCancel')?.addEventListener('click', async () => { try { await GM.MAC.json('/api/jobs/' + job.id + '/cancel'); toast('กำลังยกเลิก…'); } catch(e){} });
 }
 async function fetchResult(){
@@ -113,4 +127,4 @@ const pending = GM.LS.get('vidJob', null);
 if (pending){ job = { id: pending, state: 'queued', prompt: st.prompt || '' }; setTimeout(poll, 1500); }
 render();
 setInterval(() => { if (document.querySelector('.page[data-page="video"].on') && (!job || job.state !== 'running')) GM.MAC.refresh().then(() => { if (!job || job.blob || job.state === 'error') render(); }); }, 30000);
-window.GMVideo = { render };
+window.GMVideo = { render, setSrc: v => { st.src = v; saveSt(); render(); } };

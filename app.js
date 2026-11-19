@@ -134,7 +134,11 @@ const PAGES = {
   clone:['My Voice','อ่านข้อความเป็นเสียงของคุณเอง (บน Mac)'],
   image:['Text to Image','สร้างภาพบน Mac ของคุณ · ไม่มีลายน้ำ'],
   cover:['Cover / Live','แกะคอร์ด → เล่นใหม่แบบร้านดนตรีสด'],
-  video:['Text to Video','สร้างคลิปจากข้อความบน GPU ของ Mac'],
+  video:['Text / Image to Video','สร้างคลิป AI บน GPU ของ Mac'],
+  writer:['Script Writer','AI เขียนบท ฮุก แคปชัน บน Mac'],
+  stt:['Speech to Subtitle','ถอดเสียงเป็นซับ บน Mac'],
+  imgtools:['Image Tools','ลบพื้นหลัง · ขยายภาพด้วย AI'],
+  jobs:['Mac Queue','งานที่สั่งให้ Mac ทำ'],
 };
 function go(p){
   $$('.page').forEach(s => s.classList.toggle('on', s.dataset.page === p));
@@ -143,7 +147,7 @@ function go(p){
   $('#dock').hidden = p !== 'tts'; $('#tabbar').hidden = p === 'tts';
   $('#app').classList.toggle('no-dock', p !== 'tts'); $('#app').classList.toggle('tabbed', p !== 'tts');
   $$('#tabbar [data-tab2]').forEach(b => b.classList.toggle('on', b.dataset.tab2 === p));
-  if (p === 'home') renderHomeProjects();
+  if (p === 'home'){ renderHomeProjects(); renderMacBar(); }
   window.dispatchEvent(new CustomEvent('gm:page', {detail: p}));
   if (p === 'clone') renderClones();
   setTimeout(() => { renderQuota(); renderEst(); });
@@ -154,6 +158,11 @@ $('#btnMenu').onclick = () => { drawer.classList.add('on'); scrim.classList.add(
 $$('#tabbar [data-tab2]').forEach(b => b.onclick = () => go(b.dataset.tab2));
 $('#pageTitle').onclick = () => go('home');
 function homeAction(k){
+  const [base, sub] = k.split(':');
+  if (sub && base === 'writer'){ go('writer'); setTimeout(() => document.querySelector(`#writerRoot [data-w="${sub}"]`)?.scrollIntoView({block:'center'}), 200); return; }
+  if (sub && base === 'video'){ const v = LS.get('vidSet', {}); v.src = 'img'; LS.set('vidSet', v); go('video'); setTimeout(() => window.GMVideo?.setSrc?.('img'), 50); return; }
+  if (sub && base === 'imgtools'){ go('imgtools'); return; }
+  if (base === 'video'){ const v = LS.get('vidSet', {}); if (v.src === 'img'){ v.src = 'text'; LS.set('vidSet', v); } go('video'); setTimeout(() => window.GMVideo?.setSrc?.('text'), 50); return; }
   if (PAGES[k]) return go(k);
   if (k === 'export'){ go('studio'); setTimeout(() => window.GMStudio?.openExport(), 50); return; }
   if (k === 'sfx') return window.GMStudio?.openSfxMaker();
@@ -164,6 +173,13 @@ function homeAction(k){
 $$('[data-home]').forEach(b => b.onclick = () => homeAction(b.dataset.home));
 $('#homeAuto').onclick = () => { go('studio'); setTimeout(() => window.GMStudio?.openAuto(), 50); };
 $('#homeNewProj').onclick = () => { go('studio'); setTimeout(() => window.GMStudio?.newProject(), 50); };
+function renderMacBar(){
+  const b = $('#macBar'); if (!b) return;
+  const i = MAC.info, on = MAC.on && MAC.state === 'on' && i;
+  b.innerHTML = on ? `<span class="dotg"></span><b>Mac พร้อม</b><small>${esc((i.chip || '').replace(/^Apple /, ''))}${i.ram_gb ? ' · ' + i.ram_gb + 'GB' : ''}</small><button class="mini" data-home="jobs">🧾 คิวงาน</button>`
+    : `<span class="dotg off"></span><b>${MAC.on ? 'ติดต่อ Mac ไม่ได้' : 'ยังไม่ได้เชื่อม Mac'}</b><small>${MAC.on ? 'เปิด Gen Medi บน Mac ค้างไว้' : 'ใช้ได้เฉพาะเครื่องมือในมือถือ'}</small><button class="mini" data-home="proc">เชื่อมต่อ</button>`;
+  b.querySelectorAll('[data-home]').forEach(x => x.onclick = () => homeAction(x.dataset.home));
+}
 async function renderHomeProjects(){
   const list = (await db.all('projects')).sort((a, b) => b.updated - a.updated).slice(0, 6), box = $('#homeProjList');
   if (!list.length) return;
@@ -337,7 +353,7 @@ const MAC = {
     if (!this.on){ this.state = 'off'; renderQuota(); return null; }
     try { this.info = await (await this.call('/api/info', {}, 15000)).json(); LS.set('macInfo', this.info); }
     catch(e){ return null; }
-    renderQuota(); try { renderVoice(); renderEst(); } catch(e){}
+    renderQuota(); try { renderVoice(); renderEst(); renderMacBar(); } catch(e){}
     return this.info;
   },
   json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
