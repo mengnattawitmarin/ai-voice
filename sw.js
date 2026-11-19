@@ -1,6 +1,6 @@
 // Offline cache for the app shell only. API calls (Pollinations, Hugging Face, CDNs) always go to the network.
-const CACHE = 'ai-voice-v19';
-const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'studio.js', 'sfx.js', 'voicefx.js', 'cover.js', 'video.js', 'tools.js', 'logo.svg', 'vendor/mp4-muxer.mjs', 'vendor/lame.min.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
+const CACHE = 'ai-voice-v20';
+const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'studio.js', 'sfx.js', 'voicefx.js', 'cover.js', 'video.js', 'tools.js', 'voicetrain.js', 'train/sentences-th.txt', 'logo.svg', 'vendor/mp4-muxer.mjs', 'vendor/lame.min.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(SHELL.map(u => c.add(new Request(u, {cache: 'reload'})).catch(() => {})))).then(() => self.skipWaiting()));

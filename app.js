@@ -139,6 +139,7 @@ const PAGES = {
   stt:['Speech to Subtitle','ถอดเสียงเป็นซับ บน Mac'],
   imgtools:['Image Tools','ลบพื้นหลัง · ขยายภาพด้วย AI'],
   jobs:['Mac Queue','งานที่สั่งให้ Mac ทำ'],
+  voicetrain:['My Thai Voice Model','อัดเสียงตัวเอง → เทรนโมเดลเสียงไทยของคุณ'],
 };
 function go(p){
   $$('.page').forEach(s => s.classList.toggle('on', s.dataset.page === p));

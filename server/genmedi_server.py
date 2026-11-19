@@ -1312,6 +1312,173 @@ def job_result(jid: str):
 
 
 # web app (same files as the GitHub Pages site) — mounted last so /api/* routes win
+# ---------------- voice training: dataset of the user's own Thai recordings ----------------
+DS_ROOT = DATA / "datasets"
+
+
+def ds_dir(name):
+    n = re.sub(r"[^a-zA-Z0-9ก-๙_-]+", "-", name or "mine")[:40] or "mine"
+    d = DS_ROOT / n
+    (d / "wavs").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def ds_meta(d):
+    f = d / "meta.json"
+    try:
+        return json.loads(f.read_text())
+    except Exception:  # noqa
+        return {}
+
+
+def ds_save_meta(d, m):
+    tmp = d / "meta.json.tmp"
+    tmp.write_text(json.dumps(m, ensure_ascii=False))
+    tmp.replace(d / "meta.json")
+
+
+def ds_key(text):
+    import hashlib
+    return hashlib.sha1(re.sub(r"\s+", " ", text.strip()).encode()).hexdigest()[:12]
+
+
+def ds_process(raw_path, out_path):
+    """Trim silence, level to a steady loudness, and report problems a TTS dataset must not have."""
+    import numpy as np
+    import librosa
+    import soundfile as sf
+    y, sr = librosa.load(raw_path, sr=22050, mono=True)
+    warn = []
+    if y.size == 0:
+        raise HTTPException(400, "ไม่มีเสียงในไฟล์")
+    clip = float(np.mean(np.abs(y) > 0.985))
+    if clip > 0.001:
+        warn.append("เสียงแตก (ดังเกิน) — ถอยไมค์ออกนิด")
+    frames = librosa.feature.rms(y=y, frame_length=1024, hop_length=256)[0]
+    db = 20 * np.log10(np.maximum(frames, 1e-6))
+    noise, speech = float(np.percentile(db, 10)), float(np.percentile(db, 90))
+    if noise > -42:
+        warn.append("เสียงรบกวนพื้นหลังมาก — หาที่เงียบกว่านี้")
+    if speech - noise < 22:
+        warn.append("เสียงพูดเบาเมื่อเทียบกับเสียงรบกวน")
+    yt, _ = librosa.effects.trim(y, top_db=35, frame_length=1024, hop_length=256)
+    pad = np.zeros(int(0.12 * sr), dtype=np.float32)
+    yt = np.concatenate([pad, yt.astype(np.float32), pad])
+    rms = float(np.sqrt(np.mean(yt ** 2)) or 1e-6)
+    yt = yt * (10 ** (-20 / 20) / rms)          # ~-20 dBFS RMS
+    peak = float(np.max(np.abs(yt)) or 1)
+    if peak > 0.95:
+        yt = yt * (0.95 / peak)
+    dur = len(yt) / sr
+    if dur < 0.9:
+        raise HTTPException(400, "สั้นเกินไป — อ่านทั้งประโยคแล้วค่อยกดหยุด")
+    if dur > 20:
+        warn.append("ยาวเกิน 20 วินาที — แบ่งเป็นประโยคสั้นลงจะดีกว่า")
+    sf.write(out_path, yt, sr, subtype="PCM_16")
+    return round(dur, 2), warn, round(noise, 1)
+
+
+@app.get("/api/ds/{name}")
+def ds_status(name: str):
+    d = ds_dir(name)
+    m = ds_meta(d)
+    tot = sum(v.get("dur", 0) for v in m.values())
+    return {"name": d.name, "count": len(m), "minutes": round(tot / 60, 1), "items": m,
+            "checked": sum(1 for v in m.values() if v.get("qc")), "bad": sum(1 for v in m.values() if v.get("qc") and not v["qc"].get("ok")),
+            "train": TRAIN.get(d.name)}
+
+
+@app.post("/api/ds/{name}/clip")
+async def ds_clip(name: str, audio: UploadFile = File(...), text: str = Form(...)):
+    text = re.sub(r"\s+", " ", text.strip())
+    if not text:
+        raise HTTPException(400, "missing text")
+    d = ds_dir(name)
+    raw = to_wav_file(await audio.read(), sr=22050)
+    key = ds_key(text)
+    dur, warn, noise = await run_in_threadpool(ds_process, raw, str(d / "wavs" / f"{key}.wav"))
+    Path(raw).unlink(missing_ok=True)
+    m = ds_meta(d)
+    m[key] = {"text": text, "dur": dur, "noise": noise, "warn": warn, "t": int(time.time()), "qc": None}
+    ds_save_meta(d, m)
+    return {"key": key, "dur": dur, "warn": warn, "count": len(m), "minutes": round(sum(v.get("dur", 0) for v in m.values()) / 60, 1)}
+
+
+@app.get("/api/ds/{name}/clip/{key}")
+def ds_clip_get(name: str, key: str):
+    p = ds_dir(name) / "wavs" / f"{Path(key).name}.wav"
+    if not p.exists():
+        raise HTTPException(404, "ไม่พบไฟล์")
+    return FileResponse(p, media_type="audio/wav")
+
+
+@app.delete("/api/ds/{name}/clip/{key}")
+def ds_clip_del(name: str, key: str):
+    d = ds_dir(name)
+    (d / "wavs" / f"{Path(key).name}.wav").unlink(missing_ok=True)
+    m = ds_meta(d)
+    m.pop(key, None)
+    ds_save_meta(d, m)
+    return {"ok": True, "count": len(m)}
+
+
+DSQC_CODE = """
+import sys, json, wave, numpy as np, mlx_whisper
+a = json.load(open(sys.argv[1])); out = {}
+for k, p in a['files'].items():
+    w = wave.open(p); sr = w.getframerate()
+    x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+    if sr != 16000:
+        n = int(len(x) * 16000 / sr); x = np.interp(np.linspace(0, len(x) - 1, n), np.arange(len(x)), x).astype(np.float32)
+    r = mlx_whisper.transcribe(x, path_or_hf_repo=a['model'], language='th', condition_on_previous_text=False)
+    out[k] = r['text'].strip()
+json.dump(out, open(sys.argv[2], 'w'), ensure_ascii=False)
+"""
+
+
+def _cer(ref, hyp):
+    norm = lambda t: re.sub(r"[\s.,!?\"'“”‘’()\-…ๆ]+", "", t)
+    a, b = norm(ref), norm(hyp)
+    if not a:
+        return 1.0
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for jx, cb in enumerate(b, 1):
+            cur[jx] = min(prev[jx] + 1, cur[jx - 1] + 1, prev[jx - 1] + (ca != cb))
+        prev = cur
+    return prev[-1] / len(a)
+
+
+def job_dsqc(jid, name, all_):
+    j = JOBS[jid]
+    d = ds_dir(name)
+    m = ds_meta(d)
+    todo = {k: str(d / "wavs" / f"{k}.wav") for k, v in m.items() if (all_ or not v.get("qc")) and (d / "wavs" / f"{k}.wav").exists()}
+    j.update(state="running", msg=f"Whisper กำลังฟังตรวจ {len(todo)} ประโยค…", t0=time.time(), total=len(todo))
+    if todo:
+        with LOCK:
+            heard = run_tool_script("whisper", DSQC_CODE, {"model": WHISPER_MODEL, "files": todo}, j)
+        m = ds_meta(d)   # re-read: the user may have recorded more meanwhile
+        for k, h in heard.items():
+            if k in m:
+                c = _cer(m[k]["text"], h)
+                m[k]["qc"] = {"cer": round(c, 3), "ok": c <= 0.2, "heard": h}
+        ds_save_meta(d, m)
+    bad = [k for k, v in m.items() if v.get("qc") and not v["qc"]["ok"]]
+    j.update(state="done", result={"checked": len(todo), "bad": bad}, msg=f"ตรวจแล้ว {len(todo)} · ต้องอัดใหม่ {len(bad)}",
+             ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/ds/{name}/check")
+def ds_check(name: str, all: int = Form(0)):
+    jid = submit("dsqc", job_dsqc, (ds_dir(name).name, bool(all)), {"prompt": "ตรวจชุดเสียง " + name})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+TRAIN = {}
+
+
 if (WEB / "index.html").exists():
     app.mount("/", StaticFiles(directory=str(WEB), html=True), name="web")
 else:

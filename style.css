@@ -295,3 +295,18 @@ select.mini{padding:0 6px}
 .sttrow{display:flex;gap:8px;align-items:center}.sttrow small{color:var(--mut);font-variant-numeric:tabular-nums;width:40px;flex:none}.sttrow .inp{height:40px;padding:0 10px}
 .jrow{display:flex;gap:10px;align-items:center}
 .macbar b{white-space:nowrap}.macbar .mini{white-space:nowrap;flex:none}.macbar small{flex:1;min-width:0}
+
+/* voice training recorder */
+.vt-prog .bar{height:10px;border-radius:99px;background:#ffffff14;overflow:hidden}
+.vt-prog .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#10b981,#22d3ee);transition:width .4s}
+.vt-stats{margin-top:8px;font-size:14px;line-height:1.6}
+.vt-rec{text-align:center}
+.vt-meta{font-size:12px;color:var(--mut)}
+.vt-sent{font-size:24px;line-height:1.7;font-weight:600;margin:12px 0 10px;min-height:3.4em;display:grid;place-items:center}
+.vt-res{min-height:22px;font-size:14px}
+.vt-mic{margin:10px auto 0;display:flex;align-items:center;gap:10px;justify-content:center;padding:16px 26px;border-radius:99px;background:linear-gradient(135deg,#a855f7,#3b82f6);color:#fff;font-size:17px;min-width:220px}
+.vt-mic .dot{width:14px;height:14px;border-radius:50%;background:#fff}
+.vt-mic.on{background:linear-gradient(135deg,#ef4444,#f97316)}
+.vt-mic.on .dot{animation:vtp 1s infinite}
+.vt-mic:disabled{opacity:.4}
+@keyframes vtp{50%{opacity:.2}}
