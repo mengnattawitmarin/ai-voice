@@ -294,7 +294,25 @@ def get_ov():
             _lf._ov_patched = True
         from openvoice.api import ToneColorConverter
         d = Path(ensure_model("voice"))
-        _ov = ToneColorConverter(str(d / "converter" / "config.json"), device="cpu", enable_watermark=False)
+        cfg = str(d / "converter" / "config.json")
+        try:
+            _ov = ToneColorConverter(cfg, device="cpu", enable_watermark=False)
+        except TypeError:
+            # this OpenVoice build passes enable_watermark on to its base class (which rejects it) and always loads
+            # the wavmark watermark model → construct with a stub wavmark, then switch watermarking off
+            import types
+            had = sys.modules.get("wavmark")
+            stub = types.ModuleType("wavmark")
+            stub.load_model = lambda *a, **k: types.SimpleNamespace(to=lambda *a, **k: None)
+            sys.modules["wavmark"] = stub
+            try:
+                _ov = ToneColorConverter(cfg, device="cpu")
+            finally:
+                if had is not None:
+                    sys.modules["wavmark"] = had
+                else:
+                    sys.modules.pop("wavmark", None)
+            _ov.watermark_model = None
         _ov.load_ckpt(str(d / "converter" / "checkpoint.pth"))
     return _ov
 
