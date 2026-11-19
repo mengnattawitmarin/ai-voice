@@ -180,8 +180,10 @@ def ensure_model(key):
 
     def watch():
         while not stop.is_set():
+            size = _dir_size(cache)
+            m["mb"] = int(size / 1e6)
             if total:
-                m["pct"] = min(99, int(_dir_size(cache) * 100 / total))
+                m["pct"] = min(99, int(size * 100 / total))
             time.sleep(1)
 
     threading.Thread(target=watch, daemon=True).start()
@@ -675,7 +677,8 @@ def model_guard(key):
         if m["state"] in ("idle", "error"):
             prefetch([key])
         if m["state"] != "ready":
-            raise HTTPException(503, f"กำลังดาวน์โหลดโมเดล {m['name']} ({m['pct']}%) — ลองใหม่อีกสักครู่")
+            prog = f"{m['pct']}%" if m.get("total") else f"{m.get('mb', 0)} MB"
+            raise HTTPException(503, f"กำลังดาวน์โหลดโมเดล {m['name']} ({prog}) — ลองใหม่อีกสักครู่")
 
 
 @app.get("/api/ping")
@@ -690,7 +693,7 @@ def info(req: Request):
         "save_dir": CFG["save_dir"], "img_engine": default_image_engine(), "gpu_cores": GPU_CORES,
         "img_mode": img_mode(), "img_mode_set": CFG.get("img_mode") or "auto", "img_auto": auto_mode(),
         "img_modes": {k: v["name"] for k, v in IMG_MODES.items()},
-        "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "error")} for k, v in MODELS.items()},
+        "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "mb", "total", "error")} for k, v in MODELS.items()},
         "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
         "speakers": kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()],

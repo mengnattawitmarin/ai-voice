@@ -344,10 +344,28 @@ const MAC = {
     if (!r.ok){
       let m = 'HTTP ' + r.status; try { const j = await r.json(); m = j.detail || j.error || m; } catch(e){}
       if (r.status === 401){ this.state = 'unpaired'; renderQuota(); m = 'Mac ไม่รับการเชื่อมต่อ — สแกน QR บนหน้าจอ Mac ใหม่'; }
+      if (r.status === 503 && /กำลังดาวน์โหลดโมเดล/.test(m) && (opt._dl || 0) < 3){ await this.waitModel(m); return this.call(path, {...opt, _dl: (opt._dl || 0) + 1}, ms); }
       throw new Error(m);
     }
     if (this.state !== 'on'){ this.state = 'on'; renderQuota(); }
     return r;
+  },
+  // first use of a model: Mac downloads it in the background → wait here with progress, then the caller's request is retried automatically
+  async waitModel(msg){
+    const t0 = Date.now();
+    let key = null;
+    while (Date.now() - t0 < 3 * 3600e3){
+      let i = null; try { i = await (await this.call('/api/info', {}, 15000)).json(); } catch(e){}
+      const ms = (i && i.models) || {};
+      if (!key) key = Object.keys(ms).find(k => msg.includes(ms[k].name)) || null;
+      const m = key ? ms[key] : null;
+      if (m && m.state === 'ready') return;
+      if (m && m.state === 'error') throw new Error('ดาวน์โหลดโมเดล ' + m.name + ' ไม่สำเร็จ: ' + (m.error || '') + ' — ตรวจอินเทอร์เน็ตของ Mac แล้วกดใหม่');
+      const prog = !m ? '' : m.total ? ` ${m.pct || 0}% (${Math.round((m.mb || 0) / 100) / 10}/${Math.round(m.total / 1e8) / 10} GB)` : m.mb ? ` ${m.mb} MB` : '';
+      toast('⬇️ Mac กำลังโหลดโมเดล ' + (m ? m.name : '') + prog + ' — ครั้งแรกครั้งเดียว รอได้เลย แล้วจะทำต่อให้อัตโนมัติ');
+      await new Promise(r => setTimeout(r, 2500));
+    }
+    throw new Error('ดาวน์โหลดโมเดลนานเกินไป ลองใหม่');
   },
   async refresh(){
     if (!this.on){ this.state = 'off'; renderQuota(); return null; }
