@@ -28,3 +28,4 @@ inflect
 cn2an
 pypinyin
 jieba
+spandrel

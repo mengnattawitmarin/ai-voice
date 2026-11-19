@@ -372,8 +372,73 @@ VIDEO_MODES = {   # Wan needs 4k+1 frames
                  "max_frames": {32: 17, 48: 33, 64: 41}},
 }
 MLXGEN_MODEL = "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit"
-VENV_VIDEO = DATA / "venv-video"   # separate env so mlx-gen's MLX version can't clash with mflux
+VENV_TOOLS = DATA / "venv-tools"   # separate env for MLX tools so their MLX version can't clash with mflux
+TOOL_PKGS = {"mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
+TOOL_NAMES = {"mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
 JOBS = {}
+QUEUE = []
+QCOND = threading.Condition()
+
+
+def ensure_tool(tool, j=None):
+    """Install an optional tool into venv-tools on first use (no Terminal needed)."""
+    py = VENV_TOOLS / "bin" / "python"
+    mark = VENV_TOOLS / f".ok-{tool}"
+    if mark.exists() and py.exists():
+        return py
+    if j is not None:
+        j.update(state="loading", msg=f"ติดตั้ง{TOOL_NAMES.get(tool, tool)}ครั้งแรก (ครั้งเดียว)…")
+    if not py.exists():
+        import venv as _venv
+        _venv.EnvBuilder(with_pip=True).create(str(VENV_TOOLS))
+    r = subprocess.run([str(py), "-m", "pip", "install", "-q", "-U", *TOOL_PKGS[tool]], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"ติดตั้ง{TOOL_NAMES.get(tool, tool)}ไม่สำเร็จ: " + (r.stderr or r.stdout)[-300:])
+    mark.write_text("ok")
+    return py
+
+
+def run_tool_script(tool, code, args, j=None, timeout=3600):
+    """Run a small Python script inside venv-tools: args → JSON file, result ← JSON/text file."""
+    py = ensure_tool(tool, j)
+    work = Path(tempfile.mkdtemp(prefix="gm-"))
+    (work / "run.py").write_text(code)
+    (work / "in.json").write_text(json.dumps(args, ensure_ascii=False))
+    env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")))
+    r = subprocess.run([str(py), str(work / "run.py"), str(work / "in.json"), str(work / "out.json")], capture_output=True, text=True, timeout=timeout, env=env)
+    if r.returncode != 0 or not (work / "out.json").exists():
+        tail = (r.stderr or r.stdout or "")[-400:]
+        raise RuntimeError(("RAM ไม่พอ — " if r.returncode in (-9, 137) else "") + f"{TOOL_NAMES.get(tool, tool)}ผิดพลาด: {tail}")
+    return json.loads((work / "out.json").read_text())
+
+
+def submit(kind, fn, args, meta=None):
+    jid = secrets.token_hex(4)
+    JOBS[jid] = {"id": jid, "kind": kind, "state": "queued", "step": 0, "total": 0, "eta": None, "msg": "รอคิว", "created": time.time(), **(meta or {})}
+    with QCOND:
+        QUEUE.append((jid, fn, args))
+        QCOND.notify()
+    return jid
+
+
+def queue_worker():
+    while True:
+        with QCOND:
+            while not QUEUE:
+                QCOND.wait()
+            jid, fn, args = QUEUE.pop(0)
+        j = JOBS.get(jid)
+        if not j or j.get("cancel"):
+            if j:
+                j.update(state="error", msg="ยกเลิกแล้ว")
+            continue
+        try:
+            fn(jid, *args)
+        except Exception as e:  # noqa
+            j.update(state="error", msg=str(e)[:400])
+
+
+threading.Thread(target=queue_worker, daemon=True).start()
 
 
 def get_wan():
@@ -398,25 +463,17 @@ def get_wan():
 
 
 def ensure_mlxgen(j):
-    exe = VENV_VIDEO / "bin" / "mlxgen"
-    if exe.exists():
-        return exe
-    j.update(state="loading", msg="ติดตั้งตัวสร้างวิดีโอ HD (mlx-gen) ครั้งแรก…")
-    import venv as _venv
-    _venv.EnvBuilder(with_pip=True).create(str(VENV_VIDEO))
-    r = subprocess.run([str(VENV_VIDEO / "bin" / "python"), "-m", "pip", "install", "-q", "-U", "mlx-gen"], capture_output=True, text=True)
-    if r.returncode != 0 or not exe.exists():
-        raise RuntimeError("ติดตั้ง mlx-gen ไม่สำเร็จ: " + (r.stderr or r.stdout)[-300:])
-    return exe
+    ensure_tool("mlxgen", j)
+    return VENV_TOOLS / "bin" / "mlxgen"
 
 
-def run_mlxgen(j, prompt, w, h, frames, steps, fps, seed, out):
+def run_mlxgen(j, prompt, w, h, frames, steps, fps, seed, out, image=None):
     exe = ensure_mlxgen(j)
     j.update(state="loading", msg="กำลังโหลดโมเดล Wan2.2 5B (ครั้งแรกดาวน์โหลด ~17GB)…", total=steps, t0=time.time())
     cmd = [str(exe), "generate", "--model", MLXGEN_MODEL, "--prompt", prompt,
            "--negative-prompt", "blurry, low quality, distorted, watermark, text, static, deformed",
            "--width", str(w), "--height", str(h), "--frames", str(frames), "--steps", str(steps),
-           "--guidance", "5", "--fps", str(fps), "--seed", str(seed), "--output", out]
+           "--guidance", "5", "--fps", str(fps), "--seed", str(seed), "--output", out] + (["--image", image] if image else [])
     env = dict(os.environ)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1)
     tail = []
@@ -452,7 +509,7 @@ def upscale(src, dst, portrait, target):
         raise RuntimeError("อัปสเกลไม่สำเร็จ: " + r.stderr[-200:])
 
 
-def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None):
+def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None, image=None):
     import torch
     from diffusers.utils import export_to_video
     j = JOBS[jid]
@@ -469,8 +526,8 @@ def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None):
     final = str(DATA / f"video-{jid}.mp4")
     try:
         with LOCK:
-            if md.get("engine") == "mlxgen":
-                run_mlxgen(j, prompt, w, h, frames, md["steps"], md["fps"], seed, raw)
+            if md.get("engine") == "mlxgen" or image:
+                run_mlxgen(j, prompt, w, h, frames, md["steps"], md["fps"], seed, raw, image)
             else:
                 import torch
                 from diffusers.utils import export_to_video
@@ -502,7 +559,7 @@ def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None):
         ms = round((time.time() - j["t0"]) * 1000)
         STATS[f"video_ms_{mode}_{frames}"] = ms
         STATS[f"video_ms_per_step_{mode}"] = round(ms / md["steps"])
-        j.update(state="done", path=final, msg="เสร็จแล้ว", ms=ms, seed=seed)
+        j.update(state="done", path=final, mime="video/mp4", msg="เสร็จแล้ว", ms=ms, seed=seed)
         if final != raw:
             Path(raw).unlink(missing_ok=True)
     except Exception as e:  # noqa
@@ -802,6 +859,11 @@ async def transcode(file: UploadFile = File(...)):
     return FileResponse(out, media_type="video/mp4", filename="genmedi.mp4")
 
 
+def queue_pos(jid):
+    ids = [q[0] for q in QUEUE]
+    return ids.index(jid) + 1 if jid in ids else 0
+
+
 @app.post("/api/txt2video")
 async def txt2video(req: Request):
     j = await req.json()
@@ -810,15 +872,187 @@ async def txt2video(req: Request):
         raise HTTPException(400, "missing prompt")
     if (RAM_GB or 16) < 16:
         raise HTTPException(400, "วิดีโอต้องใช้ Mac ที่มี RAM 16GB ขึ้นไป")
-    if any(x["state"] in ("queued", "loading", "running") for x in JOBS.values()):
-        raise HTTPException(409, "กำลังสร้างวิดีโออื่นอยู่ — รอให้เสร็จก่อน")
-    if MODELS["video"]["state"] != "ready":
-        model_guard("video")
-    jid = secrets.token_hex(4)
+    mode = j.get("mode") or "standard"
+    if mode in ("draft", "standard") and MODELS["video"]["state"] != "ready":
+        prefetch(["video"])
     seed = j.get("seed") or random.randint(1, 2**31 - 2)
-    JOBS[jid] = {"id": jid, "state": "queued", "step": 0, "total": 0, "eta": None, "msg": "รอคิว", "prompt": prompt, "created": time.time()}
-    threading.Thread(target=run_video_job, args=(jid, prompt, j.get("mode") or "standard", float(j.get("seconds") or 3), bool(j.get("portrait")), seed, j.get("upscale")), daemon=True).start()
-    return {"job": jid}
+    jid = submit("video", run_video_job, (prompt, mode, float(j.get("seconds") or 3), bool(j.get("portrait")), seed, j.get("upscale")), {"prompt": prompt})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+@app.post("/api/img2video")
+async def img2video(image: UploadFile = File(...), prompt: str = Form(""), seconds: float = Form(2), portrait: bool = Form(True), upscale: str = Form("")):
+    if (RAM_GB or 16) < 24:
+        raise HTTPException(400, "ภาพ → วิดีโอ ต้องใช้ Mac RAM 32GB ขึ้นไป")
+    path = DATA / f"i2v-{secrets.token_hex(4)}{Path(image.filename or 'a.png').suffix or '.png'}"
+    path.write_bytes(await image.read())
+    seed = random.randint(1, 2**31 - 2)
+    jid = submit("video", run_video_job, (prompt or "gentle natural motion, cinematic", "hd720", seconds, portrait, seed, upscale or None, str(path)), {"prompt": prompt or "ภาพ → วิดีโอ"})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+LLM_MODEL = "mlx-community/Qwen2.5-7B-Instruct-4bit"   # Apache-2.0
+LLM_CODE = """
+import sys, json
+from mlx_lm import load, generate
+a = json.load(open(sys.argv[1]))
+m, t = load(a['model'])
+msgs = [{'role': 'system', 'content': a['system']}, {'role': 'user', 'content': a['prompt']}]
+p = t.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+try:
+    from mlx_lm.sample_utils import make_sampler
+    out = generate(m, t, prompt=p, max_tokens=a.get('max_tokens', 900), sampler=make_sampler(temp=0.75, top_p=0.9))
+except Exception:
+    out = generate(m, t, prompt=p, max_tokens=a.get('max_tokens', 900))
+json.dump({'text': out}, open(sys.argv[2], 'w'), ensure_ascii=False)
+"""
+
+
+def job_llm(jid, system, prompt, max_tokens):
+    j = JOBS[jid]
+    j.update(state="running", msg="AI กำลังเขียน… (ครั้งแรกดาวน์โหลดโมเดล ~4.5GB)", t0=time.time())
+    with LOCK:
+        r = run_tool_script("llm", LLM_CODE, {"model": LLM_MODEL, "system": system, "prompt": prompt, "max_tokens": max_tokens}, j)
+    j.update(state="done", result={"text": r["text"].strip()}, msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/llm")
+async def llm(req: Request):
+    j = await req.json()
+    prompt = (j.get("prompt") or "").strip()
+    if not prompt:
+        raise HTTPException(400, "missing prompt")
+    system = j.get("system") or "You are a helpful Thai content writer."
+    jid = submit("llm", job_llm, (system, prompt, int(j.get("max_tokens") or 900)), {"prompt": prompt[:80]})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"   # MIT
+WHISPER_CODE = """
+import sys, json, wave, numpy as np, mlx_whisper
+a = json.load(open(sys.argv[1]))
+w = wave.open(a['audio']); x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32768.0
+r = mlx_whisper.transcribe(x, path_or_hf_repo=a['model'], language=a.get('lang') or None, word_timestamps=True)
+segs = [{'start': s['start'], 'end': s['end'], 'text': s['text'].strip(),
+         'words': [{'w': ww['word'], 's': ww['start'], 'e': ww['end']} for ww in s.get('words', [])]} for s in r['segments']]
+json.dump({'text': r['text'].strip(), 'language': r.get('language'), 'segments': segs}, open(sys.argv[2], 'w'), ensure_ascii=False)
+"""
+
+
+def job_whisper(jid, src, lang):
+    j = JOBS[jid]
+    j.update(state="running", msg="กำลังถอดเสียง… (ครั้งแรกดาวน์โหลดโมเดล ~1.6GB)", t0=time.time())
+    wav = src + ".16k.wav"
+    r = subprocess.run([ffmpeg_bin(), "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", wav], capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError("อ่านไฟล์เสียงไม่ได้")
+    with LOCK:
+        res = run_tool_script("whisper", WHISPER_CODE, {"model": WHISPER_MODEL, "audio": wav, "lang": lang}, j)
+    for f in (src, wav):
+        Path(f).unlink(missing_ok=True)
+    j.update(state="done", result=res, msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/transcribe")
+async def transcribe(file: UploadFile = File(...), lang: str = Form("th")):
+    src = DATA / f"stt-{secrets.token_hex(4)}{Path(file.filename or 'a.bin').suffix}"
+    with open(src, "wb") as f:
+        while chunk := await file.read(1 << 20):
+            f.write(chunk)
+    jid = submit("transcribe", job_whisper, (str(src), lang if lang != "auto" else None), {"prompt": file.filename or "ถอดเสียง"})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+RMBG_CODE = """
+import sys, json
+from rembg import remove, new_session
+from PIL import Image
+a = json.load(open(sys.argv[1]))
+out = remove(Image.open(a['in']).convert('RGBA'), session=new_session(a.get('model', 'isnet-general-use')))
+out.save(a['out'])
+json.dump({'ok': True}, open(sys.argv[2], 'w'))
+"""
+
+
+def job_rmbg(jid, src):
+    j = JOBS[jid]
+    j.update(state="running", msg="กำลังลบพื้นหลัง…", t0=time.time())
+    out = src + ".png"
+    with LOCK:
+        run_tool_script("rmbg", RMBG_CODE, {"in": src, "out": out}, j)
+    j.update(state="done", path=out, mime="image/png", msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/rmbg")
+async def rmbg(image: UploadFile = File(...)):
+    src = DATA / f"img-{secrets.token_hex(4)}{Path(image.filename or 'a.png').suffix or '.png'}"
+    src.write_bytes(await image.read())
+    jid = submit("rmbg", job_rmbg, (str(src),), {"prompt": "ลบพื้นหลัง"})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+ESRGAN_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"   # BSD-3-Clause
+_esr = None
+
+
+def get_esrgan():
+    global _esr
+    if _esr is None:
+        import urllib.request
+        from spandrel import ModelLoader
+        w = DATA / "models" / "RealESRGAN_x4plus.pth"
+        w.parent.mkdir(parents=True, exist_ok=True)
+        if not w.exists():
+            urllib.request.urlretrieve(ESRGAN_URL, str(w) + ".part")
+            os.replace(str(w) + ".part", w)
+        _esr = ModelLoader().load_from_file(str(w)).to(torch_device()).eval()
+    return _esr
+
+
+def job_upscale_img(jid, src, scale):
+    import numpy as np
+    import torch
+    from PIL import Image
+    j = JOBS[jid]
+    j.update(state="running", msg="กำลังขยายภาพด้วย AI (Real-ESRGAN)…", t0=time.time())
+    with LOCK:
+        model = get_esrgan()
+        img = Image.open(src).convert("RGB")
+        x = torch.from_numpy(np.asarray(img).astype("float32") / 255.0).permute(2, 0, 1)[None].to(torch_device())
+        _, _, H, W = x.shape
+        T, P, S = 384, 16, 4
+        out = torch.zeros((1, 3, H * S, W * S))
+        tiles = [(y, xx) for y in range(0, H, T) for xx in range(0, W, T)]
+        j["total"] = len(tiles)
+        with torch.no_grad():
+            for n, (y, xx) in enumerate(tiles):
+                y0, x0, y1, x1 = max(0, y - P), max(0, xx - P), min(H, y + T + P), min(W, xx + T + P)
+                o = model(x[:, :, y0:y1, x0:x1]).float().cpu()
+                oy, ox = (y - y0) * S, (xx - x0) * S
+                hh, ww = min(T, H - y) * S, min(T, W - xx) * S
+                out[:, :, y * S:y * S + hh, xx * S:xx * S + ww] = o[:, :, oy:oy + hh, ox:ox + ww]
+                j["step"] = n + 1
+        arr = (out[0].clamp(0, 1).permute(1, 2, 0).numpy() * 255).round().astype("uint8")
+        res = Image.fromarray(arr)
+        if scale == 2:
+            res = res.resize((W * 2, H * 2), Image.LANCZOS)
+        dst = src + f".x{scale}.png"
+        res.save(dst)
+    j.update(state="done", path=dst, mime="image/png", msg="เสร็จแล้ว", ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/upscale_img")
+async def upscale_img(image: UploadFile = File(...), scale: int = Form(2)):
+    src = DATA / f"img-{secrets.token_hex(4)}{Path(image.filename or 'a.png').suffix or '.png'}"
+    src.write_bytes(await image.read())
+    jid = submit("upscale", job_upscale_img, (str(src), 4 if scale >= 4 else 2), {"prompt": "ขยายภาพ x%d" % scale})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+@app.get("/api/jobs")
+def jobs_list():
+    items = sorted(JOBS.values(), key=lambda x: -x["created"])[:30]
+    return [{k: v for k, v in x.items() if k not in ("path", "t0", "result")} | {"pos": queue_pos(x["id"]), "has_result": x.get("state") == "done"} for x in items]
 
 
 @app.get("/api/jobs/{jid}")
@@ -826,13 +1060,15 @@ def job(jid: str):
     j = JOBS.get(jid)
     if not j:
         raise HTTPException(404, "ไม่พบงานนี้ (Mac อาจเพิ่งรีสตาร์ท)")
-    return {k: v for k, v in j.items() if k not in ("path", "t0")}
+    return {k: v for k, v in j.items() if k not in ("path", "t0")} | {"pos": queue_pos(jid)}
 
 
 @app.post("/api/jobs/{jid}/cancel")
 def job_cancel(jid: str):
     if jid in JOBS:
         JOBS[jid]["cancel"] = True
+        if JOBS[jid]["state"] == "queued":
+            JOBS[jid].update(state="error", msg="ยกเลิกแล้ว")
     return {"ok": True}
 
 
@@ -841,18 +1077,15 @@ def job_result(jid: str):
     j = JOBS.get(jid)
     if not j or j.get("state") != "done":
         raise HTTPException(404, "ยังไม่เสร็จ")
-    return FileResponse(j["path"], media_type="video/mp4", filename="genmedi-video.mp4")
-
-
-# web app (same files as the GitHub Pages site)
-if WEB.exists():
-    app.mount("/", StaticFiles(directory=str(WEB), html=True), name="web")
+    if j.get("path"):
+        return FileResponse(j["path"], media_type=j.get("mime") or "application/octet-stream")
+    return JSONResponse(j.get("result") or {})
 
 
 def cleanup_old_videos(days=2):
     """Generated clips are also saved to the user's folder — drop server-side copies after a while."""
     cut = time.time() - days * 86400
-    for f in DATA.glob("video-*.mp4"):
+    for f in [*DATA.glob("video-*.mp4"), *DATA.glob("img-*"), *DATA.glob("i2v-*"), *DATA.glob("stt-*")]:
         try:
             if f.stat().st_mtime < cut:
                 f.unlink()
