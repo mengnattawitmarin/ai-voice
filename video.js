@@ -2,16 +2,19 @@
 const GM = window.GM;
 const { S, toast, esc, stamp, saveBlob, shareFiles, saveToMac, addHistory } = GM;
 const root = document.querySelector('#videoRoot');
-const MODES = [['draft', '⚡ ร่างเร็ว', '480×272 · 15 สเต็ป — ลองไอเดียก่อน'], ['standard', '🎬 มาตรฐาน 480p', '832×480 · 25 สเต็ป — คุณภาพดีกว่า']];
+const MODES = [['draft', '⚡ ร่างเร็ว', '480×272 · 15 สเต็ป — ลองไอเดียก่อน'], ['standard', '🎬 มาตรฐาน 480p', '832×480 · 16fps · 25 สเต็ป — ยาวได้ถึง 5 วิ · แนะนำคู่กับอัปสเกล 1080p'],
+  ['hd720', '💎 HD 720p (ทดลอง)', 'Wan2.2 5B สร้าง 720p ตรง ๆ · ใช้ RAM มาก — Mac 32GB ได้คลิปสั้นมาก (~0.7 วิ) และอาจล้มถ้า RAM ไม่พอ · ปิดแอปอื่นก่อน']];
+const UPS = [['none', 'ขนาดเดิม'], ['720', '⬆️ 720p'], ['1080', '⬆️ 1080p']];
 const LENS = [[2, '2 วิ'], [3, '3 วิ'], [5, '5 วิ']];
 const STYLES = [['none', 'ไม่ระบุ', ''], ['cine', '🎞️ ภาพยนตร์', ', cinematic lighting, film grain, shallow depth of field, smooth camera movement'], ['real', '📷 สมจริง', ', photorealistic, natural light, high detail'], ['anime', '🌸 อนิเมะ', ', anime style, vibrant colors, clean lines'], ['3d', '🧸 3D', ', 3D render, pixar style, soft lighting'], ['drone', '🚁 โดรน', ', aerial drone shot, sweeping camera motion']];
-const st = GM.LS.get('vidSet', { mode: 'standard', sec: 3, portrait: true, style: 'cine' });
+const st = Object.assign({ mode: 'standard', sec: 3, portrait: true, style: 'cine', up: '1080' }, GM.LS.get('vidSet', {}));
 let job = null, timer = null;
 const saveSt = () => GM.LS.set('vidSet', st);
 const fmt = s => s == null ? '?' : s < 60 ? Math.round(s) + ' วินาที' : Math.round(s / 60) + ' นาที';
 
 function estimate(){
-  const i = GM.MAC.info || {}, md = MODES.find(m => m[0] === st.mode)[0];
+  const i = GM.MAC.info || {}, md = st.mode;
+  if (md === 'hd720') return `⏱ 720p บน Mac ใช้เวลานาน — ผลทดสอบบน Mac 64GB: 41 เฟรมราว 15 นาที · Mac ${i.ram_gb || '?'}GB ของคุณสร้างได้สั้นกว่านี้`;
   const per = i['video_ms_per_step_' + md];
   const steps = md === 'draft' ? 15 : 25, frames = Math.round(st.sec * 4) * 4 + 1;
   const scale = frames / 49 * (md === 'draft' ? 0.35 : 1);
@@ -35,6 +38,8 @@ function render(){
     <label class="lbl2">สไตล์</label>${chips(STYLES, st.style, 'style')}
     <label class="lbl2">คุณภาพ</label>${chips(MODES, st.mode, 'mode')}
     <p class="hint" style="margin-top:4px">${esc(MODES.find(x => x[0] === st.mode)[2])}</p>
+    <label class="lbl2">ขยายไฟล์ตอนจบ (อัปสเกล + ทำภาพลื่น 30fps)</label>${chips(UPS, st.up, 'up')}
+    <p class="hint" style="margin-top:4px">อัปสเกลช่วยให้ไฟล์ได้ขนาด HD สำหรับ TikTok/YouTube ภาพคมขึ้นเล็กน้อย แต่รายละเอียดไม่เท่าการสร้างที่ความละเอียดนั้นจริง</p>
     <label class="lbl2">ความยาว / สัดส่วน</label>${chips(LENS, st.sec, 'sec')}${chips([[1, '📱 แนวตั้ง 9:16'], [0, '🖥️ แนวนอน 16:9']], st.portrait ? 1 : 0, 'portrait')}
     <p class="hint" id="vEst">${mac.on ? estimate() : ''}</p>
     <button class="cta" id="vGo" style="margin:8px 0 0"><span>🎬 สร้างวิดีโอบน Mac</span></button>
@@ -59,7 +64,7 @@ async function start(){
   const full = prompt + (STYLES.find(s => s[0] === st.style)?.[2] || '');
   const btn = root.querySelector('#vGo'); btn.disabled = true;
   try {
-    const r = await (await GM.MAC.json('/api/txt2video', { prompt: full, mode: st.mode, seconds: st.sec, portrait: st.portrait }, 60000)).json();
+    const r = await (await GM.MAC.json('/api/txt2video', { prompt: full, mode: st.mode, seconds: st.sec, portrait: st.portrait, upscale: st.up === 'none' ? null : st.up }, 60000)).json();
     job = { id: r.job, state: 'queued', prompt }; GM.LS.set('vidJob', job.id);
     poll();
   } catch(e){ toast(e.message, true); GM.MAC.refresh().then(render); }
@@ -79,7 +84,7 @@ function showJob(){
   if (job.blob){
     const url = job.url || (job.url = URL.createObjectURL(job.blob));
     box.innerHTML = `<video src="${url}" controls playsinline loop style="width:100%;border-radius:14px;background:#000"></video>
-      <p class="hint">เสร็จใน ${fmt((job.ms || 0) / 1000)} · seed ${job.seed || '-'}</p>
+      <p class="hint">เสร็จใน ${fmt((job.ms || 0) / 1000)} · seed ${job.seed || '-'}${job.note ? ' · ' + esc(job.note) : ''}</p>
       <div class="row2" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-a="dl">⬇️ บันทึก MP4</button><button class="btn sm alt" data-a="share">📤 แชร์ / Drive</button><button class="btn sm alt" data-a="again">🔁 สร้างใหม่</button></div>`;
     box.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
       const f = job.file;

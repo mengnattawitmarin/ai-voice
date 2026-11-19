@@ -364,10 +364,15 @@ def gen_image(prompt, w, h, seed, engine, steps=None, mode=None):
 
 # ---------------- text → video: Wan2.1 T2V 1.3B (Apache-2.0) on the Mac GPU ----------------
 _wan = None
-VIDEO_MODES = {   # Wan needs 4k+1 frames; 16 fps
-    "draft":    {"w": 480, "h": 272, "steps": 15, "name": "ร่างเร็ว 480×272"},
-    "standard": {"w": 832, "h": 480, "steps": 25, "name": "มาตรฐาน 480p (832×480)"},
+VIDEO_MODES = {   # Wan needs 4k+1 frames
+    "draft":    {"w": 480, "h": 272, "steps": 15, "fps": 16, "name": "ร่างเร็ว 480×272"},
+    "standard": {"w": 832, "h": 480, "steps": 25, "fps": 16, "name": "มาตรฐาน 480p (832×480)"},
+    # Wan2.2 TI2V-5B (Apache-2.0) through MLX (mlx-gen) — native 720p but very memory hungry
+    "hd720":    {"w": 1280, "h": 704, "steps": 20, "fps": 24, "engine": "mlxgen", "name": "HD 720p ทดลอง (Wan2.2 5B · MLX)",
+                 "max_frames": {32: 17, 48: 33, 64: 41}},
 }
+MLXGEN_MODEL = "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit"
+VENV_VIDEO = DATA / "venv-video"   # separate env so mlx-gen's MLX version can't clash with mflux
 JOBS = {}
 
 
@@ -392,39 +397,108 @@ def get_wan():
     return _wan
 
 
-def run_video_job(jid, prompt, mode, seconds, portrait, seed):
+def ensure_mlxgen(j):
+    exe = VENV_VIDEO / "bin" / "mlxgen"
+    if exe.exists():
+        return exe
+    j.update(state="loading", msg="ติดตั้งตัวสร้างวิดีโอ HD (mlx-gen) ครั้งแรก…")
+    import venv as _venv
+    _venv.EnvBuilder(with_pip=True).create(str(VENV_VIDEO))
+    r = subprocess.run([str(VENV_VIDEO / "bin" / "python"), "-m", "pip", "install", "-q", "-U", "mlx-gen"], capture_output=True, text=True)
+    if r.returncode != 0 or not exe.exists():
+        raise RuntimeError("ติดตั้ง mlx-gen ไม่สำเร็จ: " + (r.stderr or r.stdout)[-300:])
+    return exe
+
+
+def run_mlxgen(j, prompt, w, h, frames, steps, fps, seed, out):
+    exe = ensure_mlxgen(j)
+    j.update(state="loading", msg="กำลังโหลดโมเดล Wan2.2 5B (ครั้งแรกดาวน์โหลด ~17GB)…", total=steps, t0=time.time())
+    cmd = [str(exe), "generate", "--model", MLXGEN_MODEL, "--prompt", prompt,
+           "--negative-prompt", "blurry, low quality, distorted, watermark, text, static, deformed",
+           "--width", str(w), "--height", str(h), "--frames", str(frames), "--steps", str(steps),
+           "--guidance", "5", "--fps", str(fps), "--seed", str(seed), "--output", out]
+    env = dict(os.environ)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1)
+    tail = []
+    for line in p.stdout:
+        tail = (tail + [line.strip()])[-15:]
+        m = re.search(r"(\d+)\s*/\s*(\d+)", line)
+        if m and int(m.group(2)) == steps:
+            i = int(m.group(1))
+            if j["state"] != "running":
+                j.update(state="running", msg="กำลังสร้างวิดีโอ HD บน GPU…", t0=time.time())
+            j["step"] = i
+            el = time.time() - j["t0"]
+            j["eta"] = round(el / max(1, i) * (steps - i) + 40)
+        if j.get("cancel"):
+            p.kill()
+            raise RuntimeError("ยกเลิกแล้ว")
+    rc = p.wait()
+    if rc != 0 or not Path(out).exists():
+        killed = rc in (-9, 137) or any("memory" in t.lower() for t in tail)
+        raise RuntimeError(("RAM ไม่พอสำหรับ 720p — ลดความยาว หรือใช้ 480p + อัปสเกล 1080p" if killed else "mlx-gen ผิดพลาด") + " · " + " | ".join(tail[-4:])[-300:])
+
+
+def upscale(src, dst, portrait, target):
+    """Upscale to 1080p/720p with Lanczos + light sharpening, frame-interpolate to 30 fps for smooth motion."""
+    W, H = {"1080": (1920, 1080), "720": (1280, 720)}[target]
+    if portrait:
+        W, H = H, W
+    vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{H},"
+          "unsharp=5:5:0.6:5:5:0.0,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:vsbmc=1")
+    r = subprocess.run([ffmpeg_bin(), "-y", "-i", src, "-vf", vf, "-c:v", "libx264", "-preset", "slow", "-crf", "17",
+                        "-pix_fmt", "yuv420p", "-movflags", "+faststart", dst], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("อัปสเกลไม่สำเร็จ: " + r.stderr[-200:])
+
+
+def run_video_job(jid, prompt, mode, seconds, portrait, seed, up=None):
     import torch
     from diffusers.utils import export_to_video
     j = JOBS[jid]
     md = VIDEO_MODES.get(mode, VIDEO_MODES["standard"])
     w, h = (md["h"], md["w"]) if portrait else (md["w"], md["h"])
-    frames = int(max(1, round(seconds * 16 / 4)) * 4 + 1)
-    j.update(state="loading", msg="กำลังโหลดโมเดลวิดีโอ (ครั้งแรกนานหน่อย)…", total=md["steps"])
+    frames = int(max(1, round(seconds * md["fps"] / 4)) * 4 + 1)
+    if md.get("max_frames"):
+        cap = max(v for k, v in md["max_frames"].items() if (RAM_GB or 32) >= k) if (RAM_GB or 32) >= 32 else 9
+        if frames > cap:
+            frames = cap
+            j["note"] = f"RAM {RAM_GB}GB สร้าง 720p ได้สูงสุด {cap} เฟรม (~{cap / md['fps']:.1f} วิ)"
+    j.update(state="loading", msg="กำลังโหลดโมเดลวิดีโอ (ครั้งแรกนานหน่อย)…", total=md["steps"], frames=frames)
+    raw = str(DATA / f"video-{jid}-raw.mp4")
+    final = str(DATA / f"video-{jid}.mp4")
     try:
         with LOCK:
-            pipe = get_wan()
-            j.update(state="running", msg="กำลังสร้างวิดีโอบน GPU…", t0=time.time())
+            if md.get("engine") == "mlxgen":
+                run_mlxgen(j, prompt, w, h, frames, md["steps"], md["fps"], seed, raw)
+            else:
+                import torch
+                from diffusers.utils import export_to_video
+                pipe = get_wan()
+                j.update(state="running", msg="กำลังสร้างวิดีโอบน GPU…", t0=time.time())
 
-            def cb(p, i, t, kw):
-                j["step"] = i + 1
-                el = time.time() - j["t0"]
-                j["eta"] = round(el / (i + 1) * (md["steps"] - i - 1) + 20)
-                if j.get("cancel"):
-                    raise RuntimeError("ยกเลิกแล้ว")
-                return kw
+                def cb(p, i, t, kw):
+                    j["step"] = i + 1
+                    el = time.time() - j["t0"]
+                    j["eta"] = round(el / (i + 1) * (md["steps"] - i - 1) + 20)
+                    if j.get("cancel"):
+                        raise RuntimeError("ยกเลิกแล้ว")
+                    return kw
 
-            g = torch.Generator("cpu").manual_seed(int(seed))
-            out = pipe(prompt=prompt,
-                       negative_prompt="blurry, low quality, distorted, watermark, text, static, worst quality, deformed",
-                       height=h, width=w, num_frames=frames, guidance_scale=5.0, num_inference_steps=md["steps"],
-                       generator=g, callback_on_step_end=cb).frames[0]
-            j.update(msg="กำลังเข้ารหัส MP4…")
-            raw = str(DATA / f"video-{jid}-raw.mp4")
-            export_to_video(out, raw, fps=16)
-            final = str(DATA / f"video-{jid}.mp4")
-            r = subprocess.run([ffmpeg_bin(), "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", final], capture_output=True)
-            if r.returncode != 0:
-                final = raw
+                g = torch.Generator("cpu").manual_seed(int(seed))
+                out = pipe(prompt=prompt,
+                           negative_prompt="blurry, low quality, distorted, watermark, text, static, worst quality, deformed",
+                           height=h, width=w, num_frames=frames, guidance_scale=5.0, num_inference_steps=md["steps"],
+                           generator=g, callback_on_step_end=cb).frames[0]
+                j.update(msg="กำลังเข้ารหัส MP4…")
+                export_to_video(out, raw, fps=md["fps"])
+            if up in ("1080", "720"):
+                j.update(msg=f"กำลังอัปสเกลเป็น {up}p + ทำภาพลื่นขึ้น (30fps)…")
+                upscale(raw, final, portrait, up)
+            else:
+                r = subprocess.run([ffmpeg_bin(), "-y", "-i", raw, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", final], capture_output=True)
+                if r.returncode != 0:
+                    final = raw
         ms = round((time.time() - j["t0"]) * 1000)
         STATS[f"video_ms_{mode}_{frames}"] = ms
         STATS[f"video_ms_per_step_{mode}"] = round(ms / md["steps"])
@@ -741,7 +815,7 @@ async def txt2video(req: Request):
     jid = secrets.token_hex(4)
     seed = j.get("seed") or random.randint(1, 2**31 - 2)
     JOBS[jid] = {"id": jid, "state": "queued", "step": 0, "total": 0, "eta": None, "msg": "รอคิว", "prompt": prompt, "created": time.time()}
-    threading.Thread(target=run_video_job, args=(jid, prompt, j.get("mode") or "standard", float(j.get("seconds") or 3), bool(j.get("portrait")), seed), daemon=True).start()
+    threading.Thread(target=run_video_job, args=(jid, prompt, j.get("mode") or "standard", float(j.get("seconds") or 3), bool(j.get("portrait")), seed, j.get("upscale")), daemon=True).start()
     return {"job": jid}
 
 
