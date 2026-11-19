@@ -13,6 +13,7 @@ this Mac's own CPU/GPU:
 A free Cloudflare quick tunnel gives an https link so the phone app can drive
 this Mac from anywhere; every remote call needs the pairing token.
 """
+import asyncio
 import io
 import json
 import os
@@ -648,7 +649,6 @@ def pair_link():
 
 # ---------------- app ----------------
 app = FastAPI(title="Gen Medi", version=VERSION)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Seed", "X-Ms"])
 
 
 def local_request(req: Request):
@@ -664,6 +664,69 @@ async def auth(req: Request, call_next):
         if not tok or not secrets.compare_digest(tok, CFG["token"]):
             return JSONResponse({"error": "ต้องจับคู่เครื่องก่อน — สแกน QR บนหน้าจอ Mac"}, status_code=401)
     return await call_next(req)
+
+
+# Long requests through the Cloudflare tunnel are cut at ~100s, and the phone then only sees "can't reach Mac".
+# With header X-GM-Async the request runs in the background as a job; the phone polls /api/jobs/{id} and fetches the result.
+ASYNC_PATHS = {"/api/tts", "/api/convert_voice", "/api/txt2img", "/api/transcode"}
+
+
+async def _replay(jid, scope, body):
+    j = JOBS[jid]
+    st, chunks, given = {}, [], [False]
+
+    async def receive():
+        if not given[0]:
+            given[0] = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await asyncio.sleep(7200)
+        return {"type": "http.disconnect"}
+
+    async def send(msg):
+        if msg["type"] == "http.response.start":
+            st["code"], st["headers"] = msg["status"], msg.get("headers") or []
+        elif msg["type"] == "http.response.body":
+            chunks.append(msg.get("body") or b"")
+    try:
+        await app(scope, receive, send)
+    except Exception as e:  # noqa
+        j.update(state="error", code=500, msg=f"{type(e).__name__}: {e}"[:400])
+        return
+    code, data = st.get("code", 500), b"".join(chunks)
+    hd = {k.decode().lower(): v.decode() for k, v in st.get("headers", [])}
+    if code >= 400:
+        try:
+            jd = json.loads(data)
+            msg = jd.get("detail") or jd.get("error") or str(jd)
+        except Exception:  # noqa
+            msg = data[:300].decode(errors="ignore") or f"HTTP {code}"
+        j.update(state="error", code=code, msg=str(msg)[:400])
+    else:
+        j.update(state="done", data=data, mime=hd.get("content-type") or "application/octet-stream",
+                 rh={k: hd[k] for k in ("x-seed", "x-ms") if k in hd}, msg="เสร็จแล้ว")
+
+
+@app.middleware("http")
+async def async_and_errors(req: Request, call_next):
+    if req.method == "POST" and req.url.path in ASYNC_PATHS and req.headers.get("x-gm-async"):
+        for k in [k for k, v in JOBS.items() if v.get("kind") == "req" and time.time() - v["created"] > 1800]:
+            JOBS.pop(k, None)
+        body = await req.body()
+        scope = dict(req.scope)
+        scope["headers"] = [(k, v) for k, v in req.scope["headers"] if k != b"x-gm-async"]
+        jid = secrets.token_hex(4)
+        JOBS[jid] = {"id": jid, "kind": "req", "state": "running", "step": 0, "total": 0, "eta": None, "msg": "กำลังทำงานบน Mac…", "created": time.time()}
+        asyncio.get_running_loop().create_task(_replay(jid, scope, body))
+        return JSONResponse({"job": jid}, status_code=202)
+    try:
+        return await call_next(req)
+    except Exception as e:  # noqa — keep CORS headers on crashes so the phone sees the real error
+        print("[error]", req.url.path, repr(e), flush=True)
+        return JSONResponse({"detail": f"Mac ผิดพลาด: {type(e).__name__}: {e}"[:400]}, status_code=500)
+
+
+# added last = outermost, so every response (401, crashes, jobs) carries CORS headers
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], expose_headers=["X-Seed", "X-Ms"])
 
 
 def busy(fn, *a, **k):
@@ -1067,8 +1130,8 @@ async def upscale_img(image: UploadFile = File(...), scale: int = Form(2)):
 
 @app.get("/api/jobs")
 def jobs_list():
-    items = sorted(JOBS.values(), key=lambda x: -x["created"])[:30]
-    return [{k: v for k, v in x.items() if k not in ("path", "t0", "result")} | {"pos": queue_pos(x["id"]), "has_result": x.get("state") == "done"} for x in items]
+    items = sorted(JOBS.values(), key=lambda x: -x["created"])[:60]
+    return [{k: v for k, v in x.items() if k not in ("path", "t0", "result", "data")} | {"pos": queue_pos(x["id"]), "has_result": x.get("state") == "done"} for x in items if x.get("kind") != "req"]
 
 
 @app.get("/api/jobs/{jid}")
@@ -1076,7 +1139,7 @@ def job(jid: str):
     j = JOBS.get(jid)
     if not j:
         raise HTTPException(404, "ไม่พบงานนี้ (Mac อาจเพิ่งรีสตาร์ท)")
-    return {k: v for k, v in j.items() if k not in ("path", "t0")} | {"pos": queue_pos(jid)}
+    return {k: v for k, v in j.items() if k not in ("path", "t0", "data")} | {"pos": queue_pos(jid)}
 
 
 @app.post("/api/jobs/{jid}/cancel")
@@ -1093,6 +1156,8 @@ def job_result(jid: str):
     j = JOBS.get(jid)
     if not j or j.get("state") != "done":
         raise HTTPException(404, "ยังไม่เสร็จ")
+    if j.get("data") is not None:
+        return Response(j["data"], media_type=j.get("mime"), headers={k.title(): v for k, v in (j.get("rh") or {}).items()})
     if j.get("path"):
         return FileResponse(j["path"], media_type=j.get("mime") or "application/octet-stream")
     return JSONResponse(j.get("result") or {})

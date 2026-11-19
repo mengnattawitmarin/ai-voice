@@ -329,6 +329,7 @@ const isUrl = t => /^https?:\/\//.test(t);
 // served by the Mac itself (localhost:7861 or its https tunnel) → same origin; otherwise paired by QR (?server=…&t=…)
 const SAME_ORIGIN = (location.port === '7861' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) || /\.trycloudflare\.com$/.test(location.hostname);
 const MAC_SPK_DEF = [{id:'Linda', name:'ลินดา (หญิง)', gender:'f'}, {id:'Kerstin', name:'เคอร์สติน (หญิง)', gender:'f'}, {id:'Bernard', name:'แบร์นาร์ด (ชาย)', gender:'m'}, {id:'Thorsten', name:'ทอร์สเทน (ชาย)', gender:'m'}];
+const MAC_ASYNC = ['/api/tts', '/api/convert_voice', '/api/txt2img', '/api/transcode'];
 const MAC = {
   info: LS.get('macInfo', null), state: 'unknown',
   get base(){ return SAME_ORIGIN ? '' : (S.serverUrl || '').replace(/\/+$/, ''); },
@@ -338,8 +339,20 @@ const MAC = {
     if (!this.on) throw new Error('ยังไม่ได้เชื่อม Mac — เปิดแอป Gen Medi บน Mac แล้วสแกน QR ด้วยมือถือ (เมนู › เชื่อมต่อ Mac)');
     const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
     let r;
-    try { r = await fetch(this.base + path, {...opt, signal: ctl.signal, headers: {...(opt.headers || {}), 'X-GM-Token': S.macToken || ''}}); }
-    catch(e){ this.state = 'offline'; renderQuota(); throw new Error(e.name === 'AbortError' ? 'Mac ตอบช้าเกินไป ลองใหม่' : 'ติดต่อ Mac ไม่ได้ — ตรวจว่าเปิดแอป Gen Medi บน Mac อยู่ (ถ้าเพิ่งเปิดแอปบน Mac ใหม่ ลิงก์จะเปลี่ยน → สแกน QR ใหม่)'); }
+    const asy = (opt.method || 'GET') === 'POST' && MAC_ASYNC.includes(path);
+    try {
+      r = await fetch(this.base + path, {...opt, signal: ctl.signal, headers: {...(opt.headers || {}), 'X-GM-Token': S.macToken || '', ...(asy ? {'X-GM-Async': '1'} : {})}});
+      if (asy && r.status === 202) r = await this.awaitJob((await r.json()).job, ctl.signal);
+    }
+    catch(e){
+      clearTimeout(t);
+      if (e.name === 'AbortError') throw new Error('Mac ตอบช้าเกินไป ลองใหม่');
+      // tell apart "Mac unreachable / link changed" from "this one request failed"
+      let alive = false; try { alive = (await fetch(this.base + '/api/ping', {cache: 'no-store'})).ok; } catch(_){}
+      if (alive) throw new Error('Mac ทำงานนี้ไม่สำเร็จ (' + (e.message || 'การเชื่อมต่อขาดระหว่างทำงาน') + ') — ลองใหม่อีกครั้ง ถ้ายังเป็นอยู่ ดูข้อความในหน้าต่าง Terminal บน Mac');
+      this.state = 'offline'; renderQuota();
+      throw new Error('ติดต่อ Mac ไม่ได้ — ตรวจว่าเปิดแอป Gen Medi บน Mac อยู่ (ถ้าเพิ่งเปิดแอปบน Mac ใหม่ ลิงก์จะเปลี่ยน → สแกน QR ใหม่)');
+    }
     finally { clearTimeout(t); }
     if (!r.ok){
       let m = 'HTTP ' + r.status; try { const j = await r.json(); m = j.detail || j.error || m; } catch(e){}
@@ -349,6 +362,19 @@ const MAC = {
     }
     if (this.state !== 'on'){ this.state = 'on'; renderQuota(); }
     return r;
+  },
+  // background job started with X-GM-Async: poll until done, then return its result as a normal Response (errors become a JSON error Response)
+  async awaitJob(jid, signal){
+    const H = {'X-GM-Token': S.macToken || ''}; let miss = 0;
+    for (;;){
+      if (signal && signal.aborted) throw new DOMException('timeout', 'AbortError');
+      await new Promise(r => setTimeout(r, 1500));
+      let j;
+      try { const r = await fetch(this.base + '/api/jobs/' + jid, {headers: H, cache: 'no-store'}); j = await r.json(); if (!r.ok) throw new Error(j.detail || 'HTTP ' + r.status); miss = 0; }
+      catch(e){ if (++miss > 20) throw e; continue; }   // brief tunnel hiccups are fine
+      if (j.state === 'done') return fetch(this.base + '/api/jobs/' + jid + '/result', {headers: H, cache: 'no-store'});
+      if (j.state === 'error') return new Response(JSON.stringify({detail: j.msg || 'ผิดพลาด'}), {status: j.code || 500, headers: {'Content-Type': 'application/json'}});
+    }
   },
   // first use of a model: Mac downloads it in the background → wait here with progress, then the caller's request is retried automatically
   async waitModel(msg){
