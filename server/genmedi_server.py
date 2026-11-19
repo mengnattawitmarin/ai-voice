@@ -847,7 +847,7 @@ def info(req: Request):
         "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
         "speakers": kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()],
-        "voices": [p.stem for p in VOICES.glob("*.wav")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
+        "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_kt_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
         "video_ok": (RAM_GB or 16) >= 16, **STATS,
     }
 
@@ -894,11 +894,20 @@ async def tts(req: Request):
 
     def run():
         t0 = time.time()
+        import numpy as np
         s = get_kt()
         names = s.tts_model.speaker_manager.speaker_names
         sp = speaker if speaker in names else names[0]
-        wav = s.tts(text, speaker_name=sp, language_name=lang)
+        try:
+            s.tts_model.length_scale = float(j.get("slow") or 1.12)   # a bit slower = clearer Thai
+        except Exception:  # noqa
+            pass
         sr = s.output_sample_rate
+        out = []
+        for piece in tts_pieces(text):   # Thai spaces mark phrase breaks — speak each phrase separately with a short pause
+            out.append(np.asarray(s.tts(piece, speaker_name=sp, language_name=lang), dtype="float32"))
+            out.append(np.zeros(int(sr * (0.32 if piece[-1:] in ".!?…" else 0.16)), dtype="float32"))
+        wav = np.concatenate(out) if out else np.zeros(1, dtype="float32")
         STATS["tts_ms_per_char"] = round((time.time() - t0) * 1000 / max(1, len(text)), 1)
         return wav_bytes(wav, sr)
     data = await run_in_threadpool(busy, run)
@@ -907,6 +916,41 @@ async def tts(req: Request):
         model_guard("voice")
         data = await run_in_threadpool(busy, convert_bytes, data, str(VOICES / f"{voice}.wav"), float(j.get("tau") or 0.3))
     return Response(data, media_type="audio/wav")
+
+
+def tts_pieces(text, lo=12, hi=70):
+    """Split at spaces/newlines (Thai phrase breaks), merging tiny phrases so each piece is ~12–70 chars."""
+    words = [w for w in re.split(r"\s+", text.strip()) if w]
+    out, buf = [], ""
+    for w in words:
+        if buf and len(buf) + 1 + len(w) > hi:
+            out.append(buf)
+            buf = w
+        elif buf and len(buf) < lo:
+            buf += " " + w
+        elif buf:
+            out.append(buf)
+            buf = w
+        else:
+            buf = w
+    if buf:
+        if out and len(buf) < lo // 2:
+            out[-1] += " " + buf
+        else:
+            out.append(buf)
+    return out
+
+
+def kt_ref(name):
+    """A reference clip of a built-in KhanomTan voice, so OpenVoice can turn a recording into that timbre."""
+    p = VOICES / f"_kt_{Path(name).name}.wav"
+    if not p.exists():
+        s = get_kt()
+        sp = name if name in s.tts_model.speaker_manager.speaker_names else s.tts_model.speaker_manager.speaker_names[0]
+        wav = s.tts("สวัสดีครับ วันนี้อากาศดีมาก เราจะไปเที่ยวทะเลกันตอนเช้า แล้วกลับบ้านตอนเย็น ขอให้ทุกคนมีความสุขมากๆ นะครับ",
+                    speaker_name=sp, language_name="th-th")
+        p.write_bytes(wav_bytes(wav, s.output_sample_rate))
+    return str(p)
 
 
 def convert_bytes(src_bytes, ref_path, tau=0.3):
@@ -937,6 +981,11 @@ def del_voice(vid: str):
 @app.post("/api/convert_voice")
 async def convert_voice(source: UploadFile = File(...), ref: UploadFile = File(None), voice: str = Form(""), tau: float = Form(0.3)):
     model_guard("voice")
+    if voice.startswith("kt:"):
+        model_guard("tts")
+        src_b = await source.read()
+        name = voice[3:]
+        return Response(await run_in_threadpool(busy, lambda: convert_bytes(src_b, kt_ref(name), tau)), media_type="audio/wav")
     if voice and (VOICES / f"{Path(voice).name}.wav").exists():
         ref_path = str(VOICES / f"{Path(voice).name}.wav")
     elif ref is not None:

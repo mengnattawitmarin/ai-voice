@@ -167,6 +167,7 @@ function homeAction(k){
   if (k === 'export'){ go('studio'); setTimeout(() => window.GMStudio?.openExport(), 50); return; }
   if (k === 'sfx') return window.GMStudio?.openSfxMaker();
   if (k === 'vfx'){ go('tts'); setTimeout(() => openVoiceFx(), 50); return; }
+  if (k === 'narrate'){ go('tts'); setTimeout(() => openNarrate(), 50); return; }
   if (k === 'music'){ go('studio'); setTimeout(() => window.GMStudio?.openMusic(), 50); return; }
   ({history:openHistory, proc:openProc, about:openAbout})[k]?.();
 }
@@ -550,6 +551,7 @@ function openVoiceFx(){
   h += rng('fxRev', 'เสียงก้อง (reverb)', 0, 0.6, 0.05, fx.rev, fmtPct);
   h += rng('fxEcho', 'เสียงสะท้อน (echo)', 0, 0.6, 0.05, fx.echo, fmtPct);
   h += `<div class="row2" style="margin-top:12px"><button class="btn alt" style="flex:1" id="fxReset">↺ รีเซ็ต</button><button class="btn" style="flex:2" id="fxPlay">▶ ฟังตัวอย่าง</button></div>`;
+  h += `<button class="btn" style="width:100%;margin-top:8px" id="fxNarr">🎙️ อ่านบทเอง → เปลี่ยนเป็นเสียง AI (ไทยชัดที่สุด)</button>`;
   h += `<button class="btn alt" style="width:100%;margin-top:8px" id="fxFile">🎧 แปลงไฟล์เสียง / คลิป / อัดเสียงตัวเอง</button>`;
   h += `<p class="hint">วิธีทำงาน: แยก “ระดับเสียง (pitch)” กับ “รูปร่างเสียง/ลำคอ (formant)” ออกจากกันด้วย phase vocoder + spectral envelope แล้วประกอบใหม่ จึงเปลี่ยนเพศ/วัยได้โดยไม่เป็นเสียงชิปมังก์ ตามด้วยชุดเอฟเฟกต์ (ฟิลเตอร์ ดิสทอร์ชัน ก้อง สะท้อน ฯลฯ)<br>ใช้ได้กับเสียง AI ในเครื่อง · Google · Azure · Pollinations · เสียงโคลน และเสียงพากย์ในสตูดิโอวิดีโอ<br>💼 สิทธิ์เชิงพาณิชย์เป็นไปตามเสียงต้นทาง (Google/Azure/เสียงตัวเอง = ใช้หารายได้ได้)</p>`;
   openSheet(h, el => {
@@ -579,12 +581,70 @@ function openVoiceFx(){
       b.disabled = false; b.textContent = '▶ ฟังตัวอย่าง';
     };
     el.querySelector('#fxFile').onclick = () => openFxFile();
+    el.querySelector('#fxNarr').onclick = () => openNarrate();
     el.querySelector('#fxToLocal')?.addEventListener('click', () => {
       const want = fx.gender !== 'orig' ? fx.gender : 'f';
       const l = LOCAL_VOICES.find(x => x[2] === S.lang && (x[3] === 'ผู้ชาย') === (want === 'm')) || LOCAL_VOICES.find(x => x[2] === S.lang) || LOCAL_VOICES[0];
       S.voice = {type:'local', id:l[0]}; fxChanged(); openVoiceFx(); toast('ใช้ ' + l[1] + ' แล้ว');
     });
     el.querySelector('#fxToComm')?.addEventListener('click', () => { const c = commercialVoices()[0]; S.voice = {type:c.type, id:c.id}; fxChanged(); openVoiceFx(); });
+  });
+}
+/* read the script yourself (clear native Thai) → OpenVoice on the Mac changes it into another timbre */
+const KT_TIMBRES = [['kt:Linda','ลินดา (หญิง)'], ['kt:Kerstin','เคอร์สติน (หญิง)'], ['kt:Bernard','แบร์นาร์ด (ชาย)'], ['kt:Thorsten','ทอร์สเทน (ชาย)']];
+function openNarrate(){
+  const script = ta.value.trim();
+  const targets = [...clones.map(c => ['clone:' + c.id, '🧬 ' + c.name]), ...KT_TIMBRES, ['none', 'ไม่แปลง (เสียงฉันเอง)'], ['fx', '🎭 เอฟเฟกต์ในเครื่อง: ' + VFX.label(S.fx)]];
+  let tgt = LS.get('narrTgt', targets[0][0]); if (!targets.some(t => t[0] === tgt)) tgt = targets[0][0];
+  let h = sheetHead('🎙️ อ่านบทเอง → เสียง AI');
+  h += `<p class="hint" style="margin-top:0">คุณอ่านเอง = ออกเสียงไทยถูก 100% แล้วให้ Mac เปลี่ยนเป็นน้ำเสียงที่เลือก · ใช้หารายได้ได้ (เสียงของคุณเอง)</p>`;
+  h += script ? `<div class="prompter" id="nrScript" style="max-height:34vh;overflow:auto;padding:14px;border-radius:14px;background:#0006;font-size:20px;line-height:1.8;white-space:pre-wrap">${esc(script)}</div>`
+              : `<p class="lim">ยังไม่มีบท — พิมพ์บทในหน้าเสียงพากย์ก่อน หรืออ่านอะไรก็ได้แล้วอัดเลย</p>`;
+  h += `<h4>เปลี่ยนเป็นเสียง</h4><div class="chips" id="nrTgt">${targets.map(t => `<button class="chip ${t[0] === tgt ? 'on' : ''}" data-v="${esc(t[0])}">${esc(t[1])}</button>`).join('')}</div>`;
+  h += `<div class="row2" style="margin-top:12px"><button class="btn" style="flex:1" id="nrRec">🎤 เริ่มอัด</button><label class="btn alt" style="flex:1;text-align:center">📁 ไฟล์เสียง<input type="file" id="nrIn" accept="audio/*,video/*" hidden></label></div>`;
+  h += `<div id="nrOut" style="margin-top:12px"></div><p class="hint">เคล็ดลับ: อ่านช้ากว่าปกตินิดหนึ่ง ห้องเงียบ ถือมือถือห่างปาก ~20 ซม. · เสียงยาวได้หลายนาที</p>`;
+  openSheet(h, el => {
+    let mr = null, scrollT = null;
+    el.querySelectorAll('#nrTgt .chip').forEach(b => b.onclick = () => { tgt = b.dataset.v; LS.set('narrTgt', tgt); el.querySelectorAll('#nrTgt .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    const out = el.querySelector('#nrOut');
+    async function run(blob){
+      out.innerHTML = `<div class="ld" style="text-align:center"><div class="spin"></div><p class="hint">${tgt === 'none' ? 'กำลังเตรียมไฟล์…' : tgt === 'fx' ? 'กำลังใส่เอฟเฟกต์…' : 'Mac กำลังเปลี่ยนเสียง… (ครั้งแรกอาจนานหน่อย)'}</p></div>`;
+      try {
+        const t0 = performance.now(); let res;
+        if (tgt === 'none') res = blob;
+        else if (tgt === 'fx') res = await VFX.applyLong(blob, S.fx, VFX.norm(S.fx).srcG || 'f');
+        else {
+          let voice = tgt;
+          if (tgt.startsWith('clone:')){ const rec = clones.find(c => 'clone:' + c.id === tgt); voice = await macVoiceId(rec); }
+          const src = blob instanceof File ? blob : new File([blob], 'narration.' + extOf(blob.type), {type: blob.type});
+          res = await (await MAC.form('/api/convert_voice', {source: src, voice, tau: 0.3})).blob();
+        }
+        const f = new File([res], `genmedi-narration-${stamp()}.${extOf(res.type || 'audio/wav')}`, {type: res.type || 'audio/wav'});
+        const label = (targets.find(t => t[0] === tgt) || [, ''])[1];
+        out.innerHTML = `<audio controls src="${URL.createObjectURL(f)}" style="width:100%"></audio><p class="hint">${esc(label)} · ${((performance.now() - t0) / 1000).toFixed(1)} วินาที</p>
+          <div class="row2"><button class="btn" style="flex:1" id="nrSave">⬇️ บันทึก</button><button class="btn alt" style="flex:1" id="nrShare">📤 แชร์</button></div>
+          ${MAC.on ? '<button class="btn alt" style="width:100%;margin-top:8px" id="nrMac">💾 บันทึกลง Mac</button>' : ''}`;
+        out.querySelector('#nrSave').onclick = () => saveBlob(f, f.name);
+        out.querySelector('#nrShare').onclick = () => shareFiles([f], 'Gen Medi');
+        out.querySelector('#nrMac')?.addEventListener('click', () => saveToMac(f, 'audio', 'narration', true));
+        addHistory({kind:'audio', text: (script || 'อ่านบทเอง').slice(0, 120), voice: label, blob: f, lk: tgt === 'none' || tgt === 'fx' ? undefined : 'clone'});
+      } catch(e){ out.innerHTML = `<p class="lim">ไม่สำเร็จ: ${esc(e.message || String(e))}</p>`; }
+    }
+    el.querySelector('#nrIn').onchange = e => { const f = e.target.files[0]; if (f) run(f); };
+    el.querySelector('#nrRec').onclick = async e => {
+      const b = e.currentTarget, box = el.querySelector('#nrScript');
+      if (mr){ mr.stop(); return; }
+      if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast('อุปกรณ์นี้อัดเสียงในเว็บไม่ได้ — ใช้ “ไฟล์เสียง” แทน', true);
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true}});
+        const mime = ['audio/webm;codecs=opus','audio/mp4','audio/webm','audio/ogg'].find(m => MediaRecorder.isTypeSupported?.(m)) || '';
+        const parts = []; mr = new MediaRecorder(st, mime ? {mimeType:mime} : {});
+        mr.ondataavailable = ev => ev.data.size && parts.push(ev.data);
+        mr.onstop = () => { clearInterval(scrollT); st.getTracks().forEach(t => t.stop()); mr = null; b.textContent = '🎤 อัดใหม่'; run(new Blob(parts, {type: parts[0]?.type || 'audio/webm'})); };
+        mr.start(); b.textContent = '⏹ หยุดอัด';
+        if (box){ box.scrollTop = 0; scrollT = setInterval(() => { box.scrollTop += 1; }, 90); }   // slow teleprompter scroll
+      } catch(err){ toast('เปิดไมค์ไม่ได้: ' + (err.message || err), true); }
+    };
   });
 }
 /* convert any audio/video file or a fresh mic recording with the current voice settings */
@@ -630,6 +690,14 @@ function openFxFile(){
 }
 
 /* ---------------- chunking ---------------- */
+// long Thai runs have no spaces — cut only between words (Intl.Segmenter), never in the middle of a word
+const thaiSeg = (() => { try { return new Intl.Segmenter('th', {granularity: 'word'}); } catch(e){ return null; } })();
+function thaiSplit(w, MAX){
+  if (!thaiSeg) { const o = []; while (w.length > MAX){ o.push(w.slice(0, MAX)); w = w.slice(MAX); } o.push(w); return o; }
+  const o = []; let buf = '';
+  for (const {segment} of thaiSeg.segment(w)){ if ((buf + segment).length > MAX && buf){ o.push(buf); buf = ''; } buf += segment; }
+  o.push(buf); return o;
+}
 function makeChunks(text, MAX){
   const out = [];
   text.replace(/\r/g,'').split(/\n+/).forEach(par => {
@@ -641,7 +709,7 @@ function makeChunks(text, MAX){
       if (p.length > MAX){
         p.split(/(\s+)/).forEach(w => {
           if ((buf + w).length > MAX){ push(buf); buf = ''; }
-          while (w.length > MAX){ push(w.slice(0, MAX)); w = w.slice(MAX); }
+          if (w.length > MAX){ thaiSplit(w, MAX).forEach((x, i, arr) => { if (i < arr.length - 1) push(x); else w = x; }); }
           buf += w;
         });
       } else if ((buf + p).length > MAX){ push(buf); buf = p; }
@@ -688,7 +756,7 @@ const pkey = (v, text) => v.type + ':' + v.id + '|' + (v.type === 'device' ? '' 
 function prepare(v, text){
   const key = pkey(v, text);
   if (P.key !== key){
-    const max = v.type === 'device' ? 180 : v.type === 'local' ? 140 : 220;
+    const max = v.type === 'device' ? 180 : v.type === 'local' ? 140 : 120;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
   }
   P.voice = v;
