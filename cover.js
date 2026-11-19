@@ -185,12 +185,12 @@ function pianoVoicing(c){
 }
 // events: {t (sec), inst, m (midi) | d (drum), dur, v (0..1), dir}
 function arrange(cv){
-  const ev = [], bpm = cv.bpm * cv.tempo, spb = 60 / bpm, bar = 4 * spb, tr = cv.transpose, st = cv.style;
+  const meter = cv.meter === 3 ? 3 : 4, ev = [], bpm = cv.bpm * cv.tempo, spb = 60 / bpm, bar = meter * spb, tr = cv.transpose, st = cv.style;
   const chordsAt = cv.bars.map(b => b.chords.map(c => ({ r: (c.r + tr + 120) % 12, q: c.q })));
   const N = (inst, m, t, dur, v, extra) => ev.push(Object.assign({ inst, m, t, dur, v }, extra || {}));
   const D = (d, t, v) => ev.push({ inst: 'drums', d, t, v, dur: 0.5 });
   let t0 = 0;
-  if (cv.countIn){ for (let i = 0; i < 4; i++) D('sticks', i * spb, i ? 0.7 : 0.9); t0 = bar; }
+  if (cv.countIn){ for (let i = 0; i < meter; i++) D('sticks', i * spb, i ? 0.7 : 0.9); t0 = bar; }
   const introBars = cv.intro ? Math.min(4, chordsAt.length) : 0;
   const plan = [];
   for (let i = 0; i < introBars; i++) plan.push({ ch: chordsAt[chordsAt.length - introBars + i] || chordsAt[i], part: 'intro' });
@@ -199,6 +199,17 @@ function arrange(cv){
   lastRH = null;
   plan.forEach((p, bi) => {
     const tb = t0 + bi * bar, half = p.ch.length > 1, sw = (beat) => tb + beat * spb + rnd(-0.008, 0.008);
+    if (meter === 3){   // waltz feel for every style: bass/strum on 1, chords on 2 and 3
+      const c = p.ch[0], intro = p.part === 'intro', soft = st === 'piano' || st === 'ballad';
+      if (st === 'piano' || st === 'ballad'){ N('piano', [nearest(c.r, 40)], sw(0), spb * 1.5, 0.7); [1, 2].forEach(b => N('piano', pianoVoicing(c), sw(b), spb * 0.9, 0.42)); }
+      else { N(st === 'band' ? 'epiano' : st === 'chacha' ? 'organ' : 'guitar', guitarVoicing(c), sw(0), spb, 0.85, { dir: 'D' }); [1, 2].forEach(b => N(st === 'band' ? 'epiano' : st === 'chacha' ? 'organ' : 'guitar', st === 'band' || st === 'chacha' ? pianoVoicing(c) : guitarVoicing(c).slice(-4), sw(b), spb * 0.5, 0.5, { dir: 'U' })); }
+      if (!intro){ N('bass', [nearest(c.r, soft ? 38 : 36)], sw(0), spb * 1.4, 0.8); if (bi % 2) N('bass', [nearest((c.r + 7) % 12, 36)], sw(2), spb * 0.8, 0.5);
+        if (st === 'acoustic'){ D('cajonB', sw(0), 0.85); D('cajonS', sw(1), 0.45); D('cajonS', sw(2), 0.45); }
+        else if (soft) [0, 1, 2].forEach(b => D('brush', sw(b), b ? 0.35 : 0.55));
+        else { D('kick', sw(0), 0.9); D('snare', sw(1), 0.45); D('snare', sw(2), 0.45); [0, 1, 2].forEach(b => D('hat', sw(b), 0.35)); } }
+      if (bi % 8 === 0 && bi && !soft) D('crash', tb, 0.6);
+      return;
+    }
     const chordAt = beat => p.ch[half && beat >= 2 ? 1 : 0];
     const first = bi === 0, intro = p.part === 'intro', big = p.part === 'chorus';
     if (bi % 8 === 0 && (st === 'band' || st === 'chacha') && !first) D('crash', tb, 0.7);
@@ -247,6 +258,31 @@ function arrange(cv){
   N(st === 'acoustic' || st === 'ballad' ? 'guitar' : st === 'band' ? 'epiano' : st === 'chacha' ? 'organ' : 'piano', st === 'acoustic' || st === 'ballad' ? guitarVoicing(lc) : pianoVoicing(lc), tEnd, bar * 1.5, 0.8, { dir: 'D' });
   if (st !== 'acoustic' && st !== 'ballad') N('bass', [nearest(lc.r, 36)], tEnd, bar * 1.2, 0.8);
   return { ev, length: tEnd + bar * 1.6, songStart: t0 + introBars * bar, spb, t0, plan };
+}
+
+/* ======================= real instrument samples (FluidR3_GM, MIT) ======================= */
+const SAMPLE_BASE = window.GM_SAMPLES || 'https://raw.githubusercontent.com/mengnattawitmarin/ai-voice/samples/samples/';
+let sIndex = null; const sBufs = new Map();
+const SAMPLE_INST = { guitar: 'guitar', eguitar: 'eguitar', bass: 'bass', piano: 'piano', epiano: 'epiano', organ: 'organ', pad: 'pad' };
+const SAMPLE_DRUM = { kick: 'kick', snare: 'snare', hat: 'hat', ride: 'ride', crash: 'crash', rim: 'rim', cowbell: 'cowbell', guiro: 'guiro', shaker: 'shaker', clap: 'clap', sticks: 'sticks' };
+async function sampleIndex(){ if (sIndex) return sIndex; const r = await fetch(SAMPLE_BASE + 'index.json'); if (!r.ok) throw new Error('โหลดเสียงเครื่องดนตรีจริงไม่ได้'); return sIndex = await r.json(); }
+async function loadSample(path){
+  if (sBufs.has(path)) return sBufs.get(path);
+  const p = fetch(SAMPLE_BASE + path).then(r => { if (!r.ok) throw new Error(path); return r.arrayBuffer(); })
+    .then(ab => new Promise((res, rej) => { const c = new OfflineAudioContext(1, 1, SR); const q = c.decodeAudioData(ab, res, rej); q && q.catch && q.catch(rej); }));
+  sBufs.set(path, p); return p;
+}
+function nearestSample(inst, m){ const n = sIndex.inst[inst]?.notes; if (!n) return null; let best = n[0]; for (const x of n) if (Math.abs(x - m) < Math.abs(best - m)) best = x; return best; }
+async function prepareSamples(A, cv, prog){
+  await sampleIndex();
+  const need = new Set(), styleInst = i => i === 'bass' && cv.style === 'piano' ? 'upright' : i === 'guitar' && cv.style === 'ballad' ? 'nylon' : SAMPLE_INST[i];
+  A.ev.forEach(e => {
+    if (e.inst === 'drums'){ const d = SAMPLE_DRUM[e.d]; if (d){ need.add(`drums/${d}1.mp3`); need.add(`drums/${d}2.mp3`); } return; }
+    const si = styleInst(e.inst); if (!si) return; e.si = si;
+    e.m.forEach(m => { const n = nearestSample(si, m); if (n != null) need.add(`${si}/${n}.mp3`); });
+  });
+  let k = 0; const list = [...need];
+  for (let i = 0; i < list.length; i += 8){ await Promise.all(list.slice(i, i + 8).map(loadSample)); k += 8; prog && prog(Math.min(1, k / list.length)); }
 }
 
 /* ======================= instruments (procedural, no samples) ======================= */
@@ -371,6 +407,8 @@ const MIX = { guitar: [0.55, -0.15], eguitar: [0.32, 0.35], bass: [0.75, 0], pia
 const DRUMPAN = { hat: 0.3, ride: -0.3, crash: -0.35, shaker: 0.4, cowbell: 0.35, guiro: -0.3, rim: 0.1, brush: 0.15 };
 async function render(cv, opt = {}){
   const A = arrange(cv), len = A.length + (cv.applause ? 5 : 0.5);
+  let sampled = cv.sampled !== false;
+  if (sampled){ try { await prepareSamples(A, cv, opt.prog); } catch(e){ sampled = false; toast('ใช้เสียงสังเคราะห์แทน (โหลดเสียงเครื่องดนตรีจริงไม่ได้ — ต้องต่อเน็ตครั้งแรก)', true); } }
   const ctx = new OfflineAudioContext(2, Math.ceil(len * SR), SR);
   const master = ctx.createGain(); master.gain.value = 0.9;
   const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 3; comp.attack.value = 0.01; comp.release.value = 0.2;
@@ -388,21 +426,28 @@ async function render(cv, opt = {}){
     last.connect(p); p.connect(master); const s = ctx.createGain(); s.gain.value = inst === 'bass' ? 0.1 : inst === 'drums' ? 0.35 : 0.6; p.connect(s); s.connect(rev);
     return buses[inst] = g;
   };
-  const play = (data, t, gain, out, pan) => {
+  const play = (data, t, gain, out, pan, rate) => {
     if (!data || t < 0) return;
-    const s = ctx.createBufferSource(); s.buffer = toAB(data); const g = ctx.createGain(); g.gain.value = gain;
+    const s = ctx.createBufferSource(); s.buffer = data instanceof AudioBuffer ? data : toAB(data); if (rate) s.playbackRate.value = rate; const g = ctx.createGain(); g.gain.value = gain;
     s.connect(g);
     if (pan != null){ const p = ctx.createStereoPanner(); p.pan.value = pan; g.connect(p); p.connect(out); } else g.connect(out);
     s.start(t); return { s, g };
   };
+  if (sampled) for (const [k, pr] of sBufs) if (!pr.done) pr.done = await pr.catch(() => null);
   for (const e of A.ev){
-    if (e.inst === 'drums'){ play(drum(e.d), e.t, e.v * (e.d === 'sticks' ? 0.8 : 1), bus('drums'), DRUMPAN[e.d] ?? 0); continue; }
+    if (e.inst === 'drums'){
+      const sd = sampled && SAMPLE_DRUM[e.d] && sBufs.get(`drums/${SAMPLE_DRUM[e.d]}${e.v > 0.6 ? 1 : 2}.mp3`);
+      if (sd?.done){ const b = sd.done; play(b, e.t, e.v * 0.55 * (e.d === 'sticks' ? 0.8 : 1), bus('drums'), DRUMPAN[e.d] ?? 0); continue; }
+      play(drum(e.d), e.t, e.v * (e.d === 'sticks' ? 0.8 : 1), bus('drums'), DRUMPAN[e.d] ?? 0); continue;
+    }
     const ms = e.m, out = bus(e.inst);
     ms.forEach((m, i) => {
       const st = e.dir === 'D' ? i * 0.011 : e.dir === 'U' ? (ms.length - 1 - i) * 0.009 : 0;
       if (e.dir === 'U' && i < ms.length - 4) return;
-      const v = voiceBuf(e.inst, m, e.dur); if (!v) return;
-      const n = play(v, e.t + st, e.v * 0.35 / Math.sqrt(ms.length) * (e.inst === 'bass' ? 2 : 1), out);
+      let n;
+      const sn = sampled && e.si && nearestSample(e.si, m), sp = sn != null && sBufs.get(`${e.si}/${sn}.mp3`);
+      if (sp && sp.done){ n = play(sp.done, e.t + st, e.v * 0.3 / Math.sqrt(ms.length) * (e.inst === 'bass' ? 1.6 : 1), out, null, Math.pow(2, (m - sn) / 12)); }
+      else { const v = voiceBuf(e.inst, m, e.dur); if (!v) return; n = play(v, e.t + st, e.v * 0.35 / Math.sqrt(ms.length) * (e.inst === 'bass' ? 2 : 1), out); }
       const end = e.t + st + e.dur + 0.05;   // damp the note at its length (strings/keys)
       if (!n) return;
       if (e.inst !== 'piano' || e.dur < 2){ const rel = e.inst === 'guitar' ? 0.12 : 0.18; n.g.gain.setValueAtTime(n.g.gain.value, end); n.g.gain.exponentialRampToValueAtTime(0.0008, end + rel); n.s.stop(end + rel + 0.02); }
@@ -421,7 +466,7 @@ async function clickTrack(cv){
   const A = arrange(cv), ctx = new OfflineAudioContext(1, Math.ceil(A.length * SR), SR);
   const beats = Math.floor((A.length - A.spb) / A.spb);
   for (let i = 0; i < beats; i++){
-    const t = i * A.spb, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = i % 4 ? 1000 : 1600;
+    const t = i * A.spb, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = i % (cv.meter === 3 ? 3 : 4) ? 1000 : 1600;
     g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.05); o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + 0.06);
   }
   return ctx.startRendering();
@@ -451,7 +496,7 @@ function midiOf(cv){
   const vlq = n => { const b = [n & 0x7f]; while ((n >>= 7)) b.unshift((n & 0x7f) | 0x80); return b; };
   const tracks = [], insts = [...new Set(A.ev.map(e => e.inst))];
   const tempo = Math.round(spb * 1e6);
-  tracks.push([0, 0xff, 0x51, 3, (tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255, 0, 0xff, 0x58, 4, 4, 2, 24, 8, 0, 0xff, 0x2f, 0]);
+  tracks.push([0, 0xff, 0x51, 3, (tempo >> 16) & 255, (tempo >> 8) & 255, tempo & 255, 0, 0xff, 0x58, 4, cv.meter === 3 ? 3 : 4, 2, 24, 8, 0, 0xff, 0x2f, 0]);
   insts.forEach((inst, ti) => {
     const ch = inst === 'drums' ? 9 : Math.min(8, ti), evs = [];
     A.ev.filter(e => e.inst === inst).forEach(e => {
@@ -472,7 +517,7 @@ function midiOf(cv){
 }
 function chordSheet(cv){
   const tr = cv.transpose, k = { r: (cv.key.r + tr + 120) % 12, q: cv.key.q };
-  let s = `${cv.name || 'Cover'}\nคีย์: ${cname(k)}${tr ? ` (ต้นฉบับ ${cname(cv.key)}, ${tr > 0 ? '+' : ''}${tr})` : ''} · ${Math.round(cv.bpm * cv.tempo)} BPM · 4/4 · สไตล์: ${STYLES.find(x => x[0] === cv.style)[1]}\n`;
+  let s = `${cv.name || 'Cover'}\nคีย์: ${cname(k)}${tr ? ` (ต้นฉบับ ${cname(cv.key)}, ${tr > 0 ? '+' : ''}${tr})` : ''} · ${Math.round(cv.bpm * cv.tempo)} BPM · ${cv.meter === 3 ? '3/4' : '4/4'} · สไตล์: ${STYLES.find(x => x[0] === cv.style)[1]}\n`;
   s += cv.countIn ? 'นับเข้า 1 ห้อง (ไม้กลอง 4 ครั้ง)\n' : '';
   s += cv.intro ? `อินโทร ${Math.min(4, cv.bars.length)} ห้อง\n` : '';
   s += '\n';
@@ -483,7 +528,7 @@ function chordSheet(cv){
 
 /* ======================= UI ======================= */
 const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
-function newCover(name){ return { name: name || 'Cover', bpm: 100, key: { r: 0, q: '' }, bars: [], transpose: 0, tempo: 1, style: 'acoustic', room: 0.45, crowd: 0.25, applause: true, countIn: true, intro: true, rights: false }; }
+function newCover(name){ return { meter: 4, sampled: true, name: name || 'Cover', bpm: 100, key: { r: 0, q: '' }, bars: [], transpose: 0, tempo: 1, style: 'acoustic', room: 0.45, crowd: 0.25, applause: true, countIn: true, intro: true, rights: false }; }
 function renderUI(){
   if (!root) return;
   if (!C){
@@ -515,6 +560,9 @@ function renderUI(){
     <div class="card"><div class="card-h"><h2>🎼 สไตล์วง</h2></div>
       <div class="fxgrid" id="cvStyles">${STYLES.map(s => `<button class="fxp ${C.style === s[0] ? 'on' : ''}" data-s="${s[0]}"><span>${s[1].split(' ')[0]}</span><small>${s[1].split(' ').slice(1).join(' ')}</small></button>`).join('')}</div>
       <p class="hint" id="cvStyleD">${esc(STYLES.find(s => s[0] === C.style)[2])}</p>
+      <div class="row2" style="gap:8px;flex-wrap:wrap"><div class="chips" id="cvMeter">${[[4, '4/4 ทั่วไป'], [3, '3/4 วอลทซ์']].map(o => `<button class="chip ${(C.meter || 4) === o[0] ? 'on' : ''}" data-m="${o[0]}">${o[1]}</button>`).join('')}</div>
+      <div class="chips" id="cvSamp">${[[1, '🎻 เสียงเครื่องจริง'], [0, '🎛️ สังเคราะห์']].map(o => `<button class="chip ${(C.sampled !== false ? 1 : 0) === o[0] ? 'on' : ''}" data-v="${o[0]}">${o[1]}</button>`).join('')}</div></div>
+      <p class="hint" style="margin-top:4px">เสียงเครื่องจริงมาจาก FluidR3 GM soundfont (MIT ใช้เชิงพาณิชย์ได้) โหลดครั้งแรกประมาณ 2–4MB</p>
       <div class="fxr"><div class="fxl"><span>เปลี่ยนคีย์ (ให้เข้ากับเสียงร้อง)</span><b id="cvTrV">${tr > 0 ? '+' : ''}${tr}</b></div><input type="range" id="cvTr" min="-7" max="7" step="1" value="${tr}"></div>
       <div class="fxr"><div class="fxl"><span>ความเร็ว</span><b id="cvTpV">${bpm} BPM</b></div><input type="range" id="cvTp" min="0.7" max="1.3" step="0.01" value="${C.tempo}"></div>
       <div class="fxr"><div class="fxl"><span>เสียงห้อง / ความก้องในร้าน</span><b id="cvRmV">${Math.round(C.room * 100)}%</b></div><input type="range" id="cvRm" min="0" max="1" step="0.05" value="${C.room}"></div>
@@ -537,6 +585,8 @@ function renderUI(){
   const re = () => { renderCache = null; };
   root.querySelector('#cvNew').onclick = () => { if (C.srcUrl) URL.revokeObjectURL(C.srcUrl); C = null; renderCache = null; renderUI(); };
   root.querySelectorAll('[data-s]').forEach(b => b.onclick = () => { C.style = b.dataset.s; re(); renderUI(); });
+  root.querySelectorAll('#cvMeter [data-m]').forEach(b => b.onclick = () => { C.meter = +b.dataset.m; re(); renderUI(); });
+  root.querySelectorAll('#cvSamp [data-v]').forEach(b => b.onclick = () => { C.sampled = b.dataset.v === '1'; re(); renderUI(); });
   const slider = (id, key, fmtv, after) => { const r = root.querySelector('#' + id); GM.setRangeFill?.(r); r.oninput = () => { C[key] = +r.value; root.querySelector('#' + id + 'V').textContent = fmtv(+r.value); GM.setRangeFill?.(r); re(); }; r.onchange = () => after && after(); };
   slider('cvTr', 'transpose', v => (v > 0 ? '+' : '') + v, renderUI);
   slider('cvTp', 'tempo', v => Math.round(C.bpm * v) + ' BPM', renderUI);
@@ -598,14 +648,19 @@ async function doRender(){
   try {
     const t0 = performance.now();
     const key = JSON.stringify({ ...C, src: null, srcUrl: null, rights: null });
-    if (!renderCache || renderCache.key !== key) renderCache = { key, ...(await render(C)) };
+    if (!renderCache || renderCache.key !== key) renderCache = { key, ...(await render(C, { prog: p => { const h = out.querySelector('.hint'); if (h) h.textContent = `กำลังโหลดเสียงเครื่องดนตรีจริง ${Math.round(p * 100)}%…`; } })) };
     const wav = wavOf(renderCache.buf), url = URL.createObjectURL(wav);
     const base = `${(C.name || 'cover').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 40)} (${STYLES.find(s => s[0] === C.style)[1].split(' ')[1]} cover)`;
     out.innerHTML = `<audio controls src="${url}" style="width:100%"></audio>
       <p class="hint">เสร็จใน ${((performance.now() - t0) / 1000).toFixed(1)} วินาที · ${fmt(renderCache.buf.duration)} · ร้องเริ่มที่ ${fmt(renderCache.A.songStart)}</p>
       <div class="row2" style="flex-wrap:wrap;gap:8px"><button class="btn sm" data-x="mp3">⬇️ MP3</button><button class="btn sm alt" data-x="wav">⬇️ WAV</button><button class="btn sm alt" data-x="share">📤 แชร์ / Drive</button></div>
       <div class="row2" style="flex-wrap:wrap;gap:8px;margin-top:8px"><button class="btn sm alt" data-x="stems">🎚️ แยกเครื่องดนตรี</button><button class="btn sm alt" data-x="click">⏱ คลิก</button><button class="btn sm alt" data-x="midi">🎹 MIDI</button><button class="btn sm alt" data-x="sheet">📄 คอร์ดชีท</button></div>
-      <button class="btn alt" style="width:100%;margin-top:8px" data-x="studio">🎬 ใช้เป็นเพลงในสตูดิโอวิดีโอ</button>`;
+      <button class="btn alt" style="width:100%;margin-top:8px" data-x="studio">🎬 ใช้เป็นเพลงในสตูดิโอวิดีโอ</button>
+      <div class="vocbox"><h4 style="margin:14px 0 6px">🎤 อัดร้องทับในแอป</h4>
+        <p class="hint" style="margin-top:0">ใส่หูฟังก่อน (กันเสียงดนตรีเข้าไมค์) → กดอัด แล้วร้องตามดนตรี · หรือนำเข้าไฟล์ร้องที่อัดจากแอปอื่น (ต้องเริ่มพร้อมดนตรี)</p>
+        <div class="row2" style="gap:8px"><button class="btn" style="flex:1" id="vcRec">⏺ อัดร้อง</button><label class="btn alt" style="flex:1;text-align:center">📁 นำเข้าไฟล์ร้อง<input type="file" id="vcFile" accept="audio/*,video/*" hidden></label></div>
+        <div id="vcOut"></div></div>`;
+    bindVocal(out, fileOf, deliver);
     const fileOf = (blob, ext, suffix = '') => new File([blob], `${base}${suffix} ${stamp()}.${ext}`, { type: blob.type });
     const deliver = (f, kind = 'music') => { saveBlob(f, f.name); saveToMac(f, kind, f.name.replace(/\.[^.]+$/, '')); };
     out.querySelectorAll('[data-x]').forEach(b => b.onclick = async () => {
@@ -633,6 +688,83 @@ async function doRender(){
     });
   } catch(e){ out.innerHTML = `<p class="lim">สร้างไม่สำเร็จ: ${esc(e.message || String(e))}</p>`; }
   btn.disabled = false; btn.classList.remove('busy');
+}
+/* ======================= vocals: record over the backing, then mix ======================= */
+let vocal = null;   // {buf, offset}
+const VX = Object.assign({ vol: 1, rev: 0.25, lat: 0 }, GM.LS.get('coverVocal', {}));
+function bindVocal(out, fileOf, deliver){
+  const box = out.querySelector('#vcOut'), recBtn = out.querySelector('#vcRec');
+  let rec = null, stream = null, ac = null, src = null;
+  const show = () => {
+    if (!vocal){ box.innerHTML = ''; return; }
+    box.innerHTML = `<p class="hint">ได้เสียงร้อง ${fmt(vocal.buf.duration)} — ปรับแล้วกด “มิกซ์”</p>
+      <div class="fxr"><div class="fxl"><span>ความดังเสียงร้อง</span><b id="vxVolV">${Math.round(VX.vol * 100)}%</b></div><input type="range" id="vxVol" min="0.3" max="2" step="0.05" value="${VX.vol}"></div>
+      <div class="fxr"><div class="fxl"><span>เสียงก้องบนเสียงร้อง</span><b id="vxRevV">${Math.round(VX.rev * 100)}%</b></div><input type="range" id="vxRev" min="0" max="0.7" step="0.05" value="${VX.rev}"></div>
+      <div class="fxr"><div class="fxl"><span>เลื่อนเวลาเสียงร้อง (แก้ร้องช้า/เร็วกว่าดนตรี)</span><b id="vxLatV">${VX.lat} ms</b></div><input type="range" id="vxLat" min="-400" max="400" step="10" value="${VX.lat}"></div>
+      <div class="row2" style="gap:8px;flex-wrap:wrap"><button class="btn" style="flex:2" id="vxMix">🎚️ มิกซ์ + ฟัง</button><button class="btn alt sm" id="vxDel">ลบเสียงร้อง</button></div><div id="vxRes"></div>`;
+    [['vxVol', 'vol', v => Math.round(v * 100) + '%'], ['vxRev', 'rev', v => Math.round(v * 100) + '%'], ['vxLat', 'lat', v => v + ' ms']].forEach(([id, k, f]) => {
+      const r = box.querySelector('#' + id); GM.setRangeFill?.(r); r.oninput = () => { VX[k] = +r.value; box.querySelector('#' + id + 'V').textContent = f(+r.value); GM.setRangeFill?.(r); GM.LS.set('coverVocal', VX); };
+    });
+    box.querySelector('#vxDel').onclick = () => { vocal = null; show(); };
+    box.querySelector('#vxMix').onclick = async e => {
+      const b = e.currentTarget; b.disabled = true; b.textContent = 'กำลังมิกซ์…';
+      try {
+        const mix = await mixVocal(renderCache.buf, vocal, VX), wav = wavOf(mix);
+        const res = box.querySelector('#vxRes');
+        res.innerHTML = `<audio controls src="${URL.createObjectURL(wav)}" style="width:100%;margin-top:10px"></audio><div class="row2" style="gap:8px;flex-wrap:wrap"><button class="btn sm" data-y="mp3">⬇️ MP3 (เพลงเต็ม)</button><button class="btn sm alt" data-y="wav">⬇️ WAV</button><button class="btn sm alt" data-y="voc">⬇️ เสียงร้องอย่างเดียว</button><button class="btn sm alt" data-y="studio">🎬 ใส่ในสตูดิโอ</button></div>`;
+        res.querySelectorAll('[data-y]').forEach(x => x.onclick = async () => {
+          if (x.dataset.y === 'wav') deliver(fileOf(wav, 'wav', ' - live mix'));
+          if (x.dataset.y === 'mp3') deliver(fileOf(await mp3Of(mix), 'mp3', ' - live mix'));
+          if (x.dataset.y === 'voc') deliver(fileOf(wavOf(vocal.buf), 'wav', ' - vocal'));
+          if (x.dataset.y === 'studio'){ const f = fileOf(await mp3Of(mix), 'mp3', ' - live mix'); addHistory({ kind: 'audio', text: 'คัฟเวอร์+ร้อง: ' + C.name, voice: 'Cover/Live', blob: f }); GM.go('studio'); setTimeout(() => window.GMStudio?.setMusic?.(f, C.rights ? 'user' : 'cover', C.name), 200); }
+        });
+      } catch(err){ toast('มิกซ์ไม่สำเร็จ: ' + (err.message || err), true); }
+      b.disabled = false; b.textContent = '🎚️ มิกซ์ + ฟัง';
+    };
+  };
+  show();
+  out.querySelector('#vcFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; try { vocal = { buf: await decodeAt(f, SR, 1), offset: 0 }; show(); } catch(err){ toast('อ่านไฟล์ไม่ได้', true); } };
+  recBtn.onclick = async () => {
+    if (rec){ rec.stop(); return; }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    } catch(err){ return toast('เปิดไมค์ไม่ได้: ' + (err.message || err), true); }
+    ac = new AudioContext(); await ac.resume();
+    src = ac.createBufferSource(); src.buffer = renderCache.buf; src.connect(ac.destination);
+    const mime = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(m => MediaRecorder.isTypeSupported?.(m)) || '';
+    const parts = []; rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+    rec.ondataavailable = ev => ev.data.size && parts.push(ev.data);
+    let recStart = 0;
+    rec.onstart = () => { recStart = ac.currentTime; };
+    const t0 = ac.currentTime + 0.3;
+    rec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop()); try { src.stop(); } catch(e){}
+      const lat = (ac.outputLatency || 0) + (ac.baseLatency || 0);
+      ac.close(); rec = null; recBtn.textContent = '⏺ อัดร้อง';
+      try { const buf = await decodeAt(new Blob(parts, { type: parts[0]?.type || 'audio/webm' }), SR, 1); vocal = { buf, offset: (t0 - recStart) + lat }; show(); toast('อัดเสร็จ — กด “มิกซ์ + ฟัง”'); }
+      catch(err){ toast('ถอดรหัสเสียงที่อัดไม่ได้', true); }
+    };
+    rec.start(); src.start(t0); src.onended = () => rec && rec.state === 'recording' && rec.stop();
+    recBtn.textContent = '⏹ หยุดอัด';
+  };
+}
+async function mixVocal(back, voc, vx){
+  const len = back.length, ctx = new OfflineAudioContext(2, len, SR);
+  const b = ctx.createBufferSource(); b.buffer = back; b.connect(ctx.destination); b.start(0);
+  const v = ctx.createBufferSource(); v.buffer = voc.buf;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+  const pres = ctx.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 3200; pres.gain.value = 2.5;
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -22; comp.ratio.value = 4; comp.attack.value = 0.005; comp.release.value = 0.15;
+  const g = ctx.createGain(); g.gain.value = vx.vol * 1.4;
+  v.connect(hp); hp.connect(pres); pres.connect(comp); comp.connect(g); g.connect(ctx.destination);
+  if (vx.rev > 0){ const cv = ctx.createConvolver(); cv.buffer = impulse(ctx, 1.6, 3); const rg = ctx.createGain(); rg.gain.value = vx.rev; g.connect(cv); cv.connect(rg); rg.connect(ctx.destination); }
+  // offset > 0 means the singer's audio starts later than the music: shift it earlier
+  const off = (voc.offset || 0) + vx.lat / 1000;
+  if (off >= 0) v.start(0, Math.min(off, voc.buf.duration - 0.01)); else v.start(-off);
+  const outb = await ctx.startRendering();
+  let pk = 0; for (let c = 0; c < 2; c++){ const d = outb.getChannelData(c); for (let i = 0; i < d.length; i++){ const a = Math.abs(d[i]); if (a > pk) pk = a; } }
+  if (pk > 0.98){ const k = 0.95 / pk; for (let c = 0; c < 2; c++){ const d = outb.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= k; } }
+  return outb;
 }
 try { const saved = GM.LS.get('cover', null); if (saved && saved.bars?.length) C = Object.assign(newCover(), saved); } catch(e){}
 renderUI();
