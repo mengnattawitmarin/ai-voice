@@ -1,0 +1,79 @@
+name: mac-probe
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: install
+        run: |
+          python -m pip install -U pip
+          pip install "coqui-tts" huggingface_hub soundfile "mflux==0.6.2" 2>&1 | tail -5
+          pip list 2>/dev/null | grep -iE "torch|coqui|mflux|mlx|transformers" || true
+      - name: khanomtan files
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import list_repo_files, hf_hub_download
+          r = "wannaphong/khanomtan-tts-v1.1"
+          fs = list_repo_files(r); print(fs)
+          import os, json
+          os.makedirs("kt", exist_ok=True)
+          for f in fs:
+              if f.endswith((".pth", ".json")): hf_hub_download(r, f, local_dir="kt")
+          t = open("kt/config.json").read(); print(t[:3000]); print("...", len(t))
+          EOF
+      - name: synth
+        run: |
+          python - <<'EOF'
+          import json, re, os, traceback
+          from pathlib import Path
+          t = Path("kt/config.json").read_text()
+          try: cfg = json.loads(t)
+          except Exception as e:
+              print("bad json:", e)
+              t2 = re.sub(r",\s*([}\]])", r"\1", t)
+              cfg = json.loads(t2)
+          def fix(o):
+              if isinstance(o, dict):
+                  for k, v in o.items():
+                      if isinstance(v, str) and (v.endswith(".pth") or v.endswith(".json")) and ("/" in v):
+                          o[k] = str(Path("kt").resolve() / Path(v).name)
+                      else: fix(v)
+              elif isinstance(o, list):
+                  for v in o: fix(v)
+          fix(cfg); Path("kt/config_fixed.json").write_text(json.dumps(cfg, indent=1))
+          print({k: cfg.get(k) for k in ["model", "use_phonemes", "phonemizer"]})
+          print("model_args keys", {k: v for k, v in cfg.get("model_args", {}).items() if "file" in k or "speaker" in k or "language" in k})
+          from TTS.utils.synthesizer import Synthesizer
+          s = Synthesizer(tts_checkpoint="kt/best_model.pth", tts_config_path="kt/config_fixed.json", use_cuda=False)
+          tm = s.tts_model
+          print("speakers", getattr(tm, "speaker_manager", None) and tm.speaker_manager.speaker_names)
+          print("langs", getattr(tm, "language_manager", None) and tm.language_manager.language_names)
+          os.makedirs("out", exist_ok=True)
+          text = "สวัสดีครับ วันนี้เราจะมาเล่าเรื่องราวที่น่าสนใจให้ฟังกันนะครับ"
+          for sp in tm.speaker_manager.speaker_names:
+              try:
+                  w = s.tts(text, speaker_name=sp, language_name="th-th")
+                  s.save_wav(w, f"out/{sp}.wav"); print("ok", sp, len(w))
+              except Exception: traceback.print_exc()
+          EOF
+      - name: mflux api
+        run: |
+          python - <<'EOF'
+          import inspect, mflux
+          print(mflux.__file__)
+          import pkgutil
+          print([m.name for m in pkgutil.iter_modules(mflux.__path__)])
+          from mflux import Flux1, Config
+          print(inspect.signature(Flux1.__init__)); print(inspect.signature(Flux1.generate_image)); print(inspect.signature(Config.__init__))
+          try:
+              from mflux import ModelConfig; print("ModelConfig", [m for m in dir(ModelConfig) if not m.startswith('_')])
+          except Exception as e: print(e)
+          EOF
+          mflux-generate --help | head -60
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: probe-out, path: out}
