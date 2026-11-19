@@ -180,7 +180,7 @@ function render(){
     <label class="lbl2">ลายน้ำ / ชื่อช่อง</label><input class="inp" id="stWm" value="${esc(P.watermark)}" placeholder="@ชื่อช่องของคุณ">
     <label class="lbl2">เพลงพื้นหลัง <small style="color:var(--mut)">(ใช้เพลงที่คุณมีสิทธิ์ใช้ เช่น YouTube Audio Library)</small></label>
     <div class="row2"><button class="btn sm" style="flex:1" id="stGenMusic">🎼 สร้างเพลงประกอบ (ฟรี 💼)</button><label class="btn alt sm" style="flex:1">🎵 ไฟล์เพลงของคุณ<input type="file" id="stMusic" accept="audio/*" hidden></label></div>
-    ${P.music ? `<div class="row2" style="margin-top:8px"><span class="mini ok" style="flex:1">${P.musicLk === 'gen' ? '🎼 เพลงที่แอปสร้าง (' + esc(P.musicName || '') + ') · ไม่มีลิขสิทธิ์ภายนอก' : '🎵 ไฟล์เพลงของคุณ'}</span><button class="btn danger sm" id="stMusicDel">ลบเพลง</button></div>` : ''}
+    ${P.music ? `<div class="row2" style="margin-top:8px"><span class="mini ok" style="flex:1">${P.musicLk === 'gen' ? '🎼 เพลงที่แอปสร้าง (' + esc(P.musicName || '') + ') · ไม่มีลิขสิทธิ์ภายนอก' : P.musicLk === 'cover' ? '🎸 ดนตรีคัฟเวอร์ (' + esc(P.musicName || '') + ') · ทำนองเป็นของผู้แต่ง' : '🎵 ไฟล์เพลงของคุณ'}</span><button class="btn danger sm" id="stMusicDel">ลบเพลง</button></div>` : ''}
     <div class="sl" style="padding:10px 0 0"><div class="sl-h" style="margin-bottom:6px">เสียงเพลง <span class="v" id="stMvV">${Math.round(P.musicVol * 100)}%</span></div><input type="range" id="stMv" min="0" max="0.6" step="0.01" value="${P.musicVol}"></div>
     <div class="sl" style="padding:6px 0 0"><div class="sl-h" style="margin-bottom:6px">เสียงพากย์ <span class="v" id="stNvV">${Math.round(P.narrVol * 100)}%</span></div><input type="range" id="stNv" min="0" max="2" step="0.05" value="${P.narrVol}"></div>
   </div>
@@ -619,5 +619,6 @@ async function init(){
   render();
 }
 window.addEventListener('gm:page', e => { if (e.detail !== 'studio') pause(); else drawPreview(); });
-window.GMStudio = { openAuto: () => { if (!P) P = newProj(); openAuto(); }, openExport, newProject, openProject, openSfxMaker, openMusic: () => { if (!P) P = newProj(); openMusic(); } };
+function setMusic(file, lk, name){ if (!P){ P = newProj(name); } P.music = file; P.musicLk = lk; P.musicName = name; touch(); render(); toast(lk === 'cover' ? 'ใส่ดนตรีคัฟเวอร์แล้ว — โหมดเชิงพาณิชย์จะเตือน เพราะทำนอง/เนื้อร้องเป็นของผู้แต่ง' : 'ใส่เพลงแล้ว'); }
+window.GMStudio = { openAuto: () => { if (!P) P = newProj(); openAuto(); }, openExport, newProject, openProject, openSfxMaker, setMusic, openMusic: () => { if (!P) P = newProj(); openMusic(); } };
 init();

@@ -131,8 +131,9 @@ const PAGES = {
   home:['GEN MEDI','สตูดิโอสร้างสื่อด้วย AI · เสียง ภาพ วิดีโอ'],
   studio:['Video Studio','ตัดต่อ ภาพ + เสียงพากย์ + ซับ → พร้อมลงทุกแพลตฟอร์ม'],
   tts:['Text to Speech','เปลี่ยนข้อความเป็นเสียงพูดคุณภาพสูง'],
-  clone:['Voice Clone','สร้างเสียงพูดจากเสียงตัวอย่าง'],
-  image:['Text to Image','เปลี่ยนคำบรรยายเป็นภาพด้วย AI ฟรี'],
+  clone:['My Voice','อ่านข้อความเป็นเสียงของคุณเอง (บน Mac)'],
+  image:['Text to Image','สร้างภาพบน Mac ของคุณ · ไม่มีลายน้ำ'],
+  cover:['Cover / Live','แกะคอร์ด → เล่นใหม่แบบร้านดนตรีสด'],
 };
 function go(p){
   $$('.page').forEach(s => s.classList.toggle('on', s.dataset.page === p));
@@ -290,6 +291,7 @@ const LIC = {
   local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS/VITS (CC-BY-NC)'},
   mac: {ok:true, t:'เชิงพาณิชย์ได้ — KhanomTan TTS v1.1 (Apache-2.0) บน Mac'},
   clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + OpenVoice V2 (MIT) บน Mac'},
+  cover: {ok:null, t:'ดนตรีบันทึกใหม่ของคุณ — แต่ทำนอง/เนื้อร้องเป็นลิขสิทธิ์ผู้แต่ง (ต้องขออนุญาตก่อนใช้เชิงพาณิชย์)'},
   'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
   // keys kept so projects made with earlier versions still show their licence
   gcloud: {ok:true, t:'เชิงพาณิชย์ได้ — Google Cloud TTS'}, azure: {ok:true, t:'เชิงพาณิชย์ได้ — Microsoft Azure TTS'},
@@ -339,7 +341,7 @@ const MAC = {
   json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
   form(path, fields, ms){ const fd = new FormData(); for (const [k, v] of Object.entries(fields)) if (v != null) fd.append(k, v, v instanceof Blob ? (v.name || 'file.' + extOf(v.type)) : undefined); return this.call(path, {method:'POST', body: fd}, ms); },
   async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
-  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, engine: S.macImg || undefined}); const blob = await r.blob(); SPEED.learn('img-mac', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
+  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined}); const blob = await r.blob(); SPEED.learn('img-mac-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   speakers(){ return this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF; },
 };
 const commercialVoices = () => MAC.on ? MAC.speakers().map(s => ({type:'mac', id:s.id, g:s.gender})) : [];
@@ -789,14 +791,16 @@ function defMs(k){
     case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
     case 'mac': return MAC.info?.tts_ms_per_char || 12;
     case 'clone': return (MAC.info?.tts_ms_per_char || 12) + 25;
-    case 'img-mac': return MAC.info?.['img_ms_' + MAC.info?.img_engine] || (MAC.info?.img_engine === 'vega' ? 15000 : ram >= 32 ? 25000 : 50000);
+    case 'img-mac': { const md = curImgMode(); return MAC.info?.['img_ms_' + md] || Math.round(({fast:16000, balanced:70000, quality:220000})[md] * 8 / Math.max(8, MAC.info?.gpu_cores || 8)); }
   }
   return 50;
 }
-function speedOf(k){ const m = SPEED.get(k); return {v: m || defMs(k), measured: !!m}; }
+const IMG_MODE_LABEL = {auto:'อัตโนมัติ', fast:'⚡ เร็ว', balanced:'⚖️ สมดุล', quality:'💎 คมชัดสูง'};
+function curImgMode(){ const m = S.macImg && S.macImg !== 'auto' && IMG_MODE_LABEL[S.macImg] ? S.macImg : (MAC.info?.img_mode || 'balanced'); return (MAC.info?.ram_gb || 16) < 14 && m !== 'fast' ? 'fast' : m; }
+function speedOf(k){ const m = SPEED.get(k === 'img-mac' ? 'img-mac-' + curImgMode() : k); return {v: m || defMs(k), measured: !!m}; }
 function whereLabel(k){
   const mac = 'Mac' + (MAC.info?.chip ? ` (${MAC.info.chip.replace(/^Apple /, '')}${MAC.info.ram_gb ? ' · ' + MAC.info.ram_gb + 'GB' : ''})` : '');
-  return ({'local-webgpu':'GPU ในมือถือเครื่องนี้', 'local-wasm':'CPU ในมือถือเครื่องนี้', 'mac': mac, 'clone': mac + ' + OpenVoice', 'img-mac': mac + ' · ' + (MAC.info?.img_engine === 'vega' ? 'Segmind-Vega' : 'FLUX.1-schnell')})[k] || k;
+  return ({'local-webgpu':'GPU ในมือถือเครื่องนี้', 'local-wasm':'CPU ในมือถือเครื่องนี้', 'mac': mac, 'clone': mac + ' + OpenVoice', 'img-mac': mac + ' · ' + IMG_MODE_LABEL[curImgMode()] + (curImgMode() === 'fast' ? ' (Segmind-Vega)' : ' (FLUX.1-schnell)')})[k] || k;
 }
 function estimateVoice(v, chars){
   const listen = chars / 13.3 / effRate();
@@ -1109,9 +1113,13 @@ async function openProc(){
   }
   if (on){
     h += `<h4>โมเดลบน Mac</h4>${models}<button class="btn alt sm" id="pDl" style="margin-top:8px">ดาวน์โหลดโมเดลทั้งหมดตอนนี้</button>`;
-    h += `<h4>สร้างภาพบน Mac ใช้</h4>
-      ${opt('macImg','flux',S.macImg || i.img_engine,'FLUX.1-schnell 4-bit ' + licTag('img-mac'), 'คมชัดที่สุด · ต้องการ RAM 16GB+ · ' + fmtDur(defMs('img-mac') / 1000) + '/ภาพโดยประมาณ', (i.ram_gb || 16) < 16)}
-      ${opt('macImg','vega',S.macImg || i.img_engine,'Segmind-Vega (เร็ว) ' + licTag('img-mac'), 'เร็วกว่า ใช้ RAM น้อย · คุณภาพรองลงมา')}`;
+    const small = (i.ram_gb || 16) < 14, gc = i.gpu_cores ? ` · GPU ${i.gpu_cores} คอร์` : '';
+    const mEst = md => { const keep = S.macImg; S.macImg = md; const v = fmtDur(speedOf('img-mac').v / 1000); S.macImg = keep; return '~' + v + '/ภาพ'; };
+    h += `<h4>โหมดสร้างภาพบน Mac${gc}</h4>
+      ${opt('macImg','auto',IMG_MODE_LABEL[S.macImg] ? S.macImg : 'auto','อัตโนมัติ ' + licTag('img-mac'), 'เลือกให้ตามสเปค → ' + esc(IMG_MODE_LABEL[i.img_auto] || '') + ' · ' + mEst(i.img_auto || 'balanced'))}
+      ${opt('macImg','fast',S.macImg,'⚡ เร็ว — Segmind-Vega', 'ใช้ได้ทุก Mac รวม M1 8GB · ' + mEst('fast'))}
+      ${opt('macImg','balanced',S.macImg,'⚖️ สมดุล — FLUX.1-schnell 768px', small ? 'ต้องใช้ RAM 16GB ขึ้นไป' : 'คมกว่ามาก · ' + mEst('balanced'), small)}
+      ${opt('macImg','quality',S.macImg,'💎 คมชัดสูง — FLUX.1-schnell 1024px', small ? 'ต้องใช้ RAM 16GB ขึ้นไป' : 'เหมาะกับ M1/M2 Pro·Max · ' + mEst('quality'), small)}`;
     h += `<label class="switch" style="margin-top:12px"><span>บันทึกงานลง Mac อัตโนมัติ<br><small style="color:var(--mut)" id="macDir">โฟลเดอร์: ${esc(i.save_dir || '?')}</small></span><input type="checkbox" id="macSave" ${S.macSave ? 'checked' : ''}></label>
       <div class="row2" style="margin-top:10px"><button class="btn alt sm" id="macPick">เปลี่ยนโฟลเดอร์ (เลือกบน Mac)</button>${MAC.local ? '<button class="btn alt sm" id="macOpen">เปิดโฟลเดอร์</button>' : ''}</div>
       <p class="hint">จัดเก็บเป็น <code>โฟลเดอร์/images|audio|videos|music/วันที่</code></p>`;
@@ -1126,7 +1134,7 @@ async function openProc(){
       if (b.disabled) return;
       const g = b.dataset.g, v = b.dataset.v; S[g] = v; save();
       el.querySelectorAll(`.opt[data-g="${g}"]`).forEach(x => x.classList.toggle('on', x === b));
-      if (g === 'macImg') try { await MAC.json('/api/settings', {img_engine: v}); MAC.refresh(); } catch(e){ toast(e.message, true); }
+      if (g === 'macImg') try { await MAC.json('/api/settings', {img_mode: v}); MAC.refresh(); } catch(e){ toast(e.message, true); }
       renderVoice(); renderEst(); renderImgEngine();
     });
     el.querySelector('#srvTest')?.addEventListener('click', async () => {
@@ -1137,7 +1145,7 @@ async function openProc(){
       if (r){ toast('เชื่อม Mac แล้ว ✓'); openProc(); } else m.innerHTML = '<span style="color:var(--err)">เชื่อมไม่ได้ — ตรวจว่าแอปบน Mac เปิดอยู่ และใช้ลิงก์ล่าสุด</span>';
     });
     el.querySelector('#srvOff')?.addEventListener('click', () => { S.serverUrl = ''; S.macToken = ''; save(); MAC.info = null; MAC.state = 'off'; renderVoice(); renderQuota(); openProc(); });
-    el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,' + (S.macImg || i.img_engine)}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
+    el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,' + (curImgMode() === 'fast' ? 'vega' : 'flux')}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
     el.querySelector('#macSave')?.addEventListener('change', e => { S.macSave = e.target.checked; save(); });
     el.querySelector('#macOpen')?.addEventListener('click', () => MAC.json('/api/open_folder'));
     el.querySelector('#macPick')?.addEventListener('click', async () => {
@@ -1264,8 +1272,8 @@ $('#btnImgFromText').onclick = () => { const t = ta.value.trim(); if (!t) return
 function imgPrompt(prompt){ const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2]; return prompt + (st ? ', ' + st : ''); }
 function renderImgEngine(){
   const box = $('#imgEngine'); if (!box) return;
-  const cur = S.macImg || MAC.info?.img_engine || 'flux';
-  chips(box, [['flux', '💼 FLUX.1-schnell · คมชัด'], ['vega', '💼 Segmind-Vega · เร็ว']], cur, async v => { S.macImg = v; save(); renderEst(); try { await MAC.json('/api/settings', {img_engine: v}); MAC.refresh(); } catch(e){} });
+  const cur = IMG_MODE_LABEL[S.macImg] ? S.macImg : 'auto';
+  chips(box, Object.entries(IMG_MODE_LABEL).map(([k, n]) => [k, k === 'auto' && MAC.info?.img_auto ? n + ' (' + IMG_MODE_LABEL[MAC.info.img_auto].replace(/^\S+ /, '') + ')' : n]), cur, async v => { S.macImg = v; save(); renderEst(); try { await MAC.json('/api/settings', {img_mode: v}); MAC.refresh(); } catch(e){} });
 }
 renderImgEngine();
 let imgBusy = false;
@@ -1349,7 +1357,7 @@ async function genImage(prompt, ratio){
 /* public API used by studio.js */
 window.GM = { srcGenderOf, openVoiceFx, S, LS, db, save, toast, openSheet, closeAll, sheetHead, esc, sleep, stamp, saveBlob, shareFiles, saveToMac, asFile, addHistory,
   curVoice, synthesize, makeChunks, mergeAudio, decode, encodeWav, genImage, allowed, lic, licTag, voiceLicKey, go, status, effRate,
-  RATIOS, IMG_STYLES, openSettings, openProc, renderEst, isUrl, getSpec, fmtDur, SPEED, MAC, ta };
+  RATIOS, IMG_STYLES, openSettings, openProc, setRangeFill, renderEst, isUrl, getSpec, fmtDur, SPEED, MAC, ta };
 window.dispatchEvent(new Event('gm:ready'));
 const h0 = location.hash.slice(1); go(PAGES[h0] ? h0 : 'home');
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });

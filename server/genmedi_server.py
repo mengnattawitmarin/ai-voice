@@ -84,6 +84,30 @@ try:
 except Exception:
     RAM_GB = None
 CORES = os.cpu_count()
+
+
+def gpu_cores():
+    out = sh("system_profiler", "SPDisplaysDataType")
+    m = re.search(r"Total Number of Cores:\s*(\d+)", out)
+    return int(m.group(1)) if m else None
+
+
+GPU_CORES = gpu_cores()
+# image modes: which model + size + steps. Auto picks by RAM / GPU cores (base M1 8GB → fast; M1/M2 Max → quality)
+IMG_MODES = {
+    "fast":     {"engine": "vega", "base": 768,  "steps": 4, "name": "เร็ว — Segmind-Vega 768px (Mac ทุกรุ่น รวม M1 8GB)"},
+    "balanced": {"engine": "flux", "base": 768,  "steps": 2, "name": "สมดุล — FLUX.1-schnell 4-bit 768px · 2 สเต็ป (RAM 16GB+)"},
+    "quality":  {"engine": "flux", "base": 1024, "steps": 4, "name": "คมชัดสูง — FLUX.1-schnell 4-bit 1024px · 4 สเต็ป (M1/M2 Pro·Max)"},
+}
+
+
+def auto_mode():
+    ram, g = RAM_GB or 8, GPU_CORES or 8
+    if ram < 16:
+        return "fast"
+    if ram >= 24 and g >= 16:
+        return "quality"
+    return "balanced"
 STATS = {}
 LOCK = threading.Lock()   # one heavy job at a time (shared GPU memory)
 
@@ -104,8 +128,13 @@ MODELS = {
 }
 
 
+def img_mode():
+    m = CFG.get("img_mode") or "auto"
+    return auto_mode() if m == "auto" else m
+
+
 def default_image_engine():
-    return CFG.get("img_engine") or ("flux" if (RAM_GB or 8) >= 16 else "vega")
+    return IMG_MODES[img_mode()]["engine"]
 
 
 def _dir_size(p):
@@ -318,13 +347,13 @@ def fit_size(w, h, base):
     return max(256, int(w * s) // 64 * 64), max(256, int(h * s) // 64 * 64)
 
 
-def gen_image(prompt, w, h, seed, engine, steps=None):
+def gen_image(prompt, w, h, seed, engine, steps=None, mode=None):
     seed = int(seed) if seed not in (None, "", 0) else random.randint(1, 2**31 - 2)
+    md = IMG_MODES.get(mode or img_mode(), IMG_MODES["fast"])
     if engine == "flux":
         from mflux import Config
-        base = 1024 if (RAM_GB or 16) >= 24 else 768
-        W, H = fit_size(w, h, base)
-        img = get_flux().generate_image(seed=seed, prompt=prompt, config=Config(num_inference_steps=int(steps or 4), height=H, width=W))
+        W, H = fit_size(w, h, md["base"] if md["engine"] == "flux" else 768)
+        img = get_flux().generate_image(seed=seed, prompt=prompt, config=Config(num_inference_steps=int(steps or md["steps"]), height=H, width=W))
         pil = getattr(img, "image", img)
     else:
         import torch
@@ -448,7 +477,9 @@ def ping():
 def info(req: Request):
     return {
         "app": "genmedi", "version": VERSION, "chip": CHIP, "ram_gb": RAM_GB, "cores": CORES, "os": platform.platform(),
-        "save_dir": CFG["save_dir"], "img_engine": default_image_engine(),
+        "save_dir": CFG["save_dir"], "img_engine": default_image_engine(), "gpu_cores": GPU_CORES,
+        "img_mode": img_mode(), "img_mode_set": CFG.get("img_mode") or "auto", "img_auto": auto_mode(),
+        "img_modes": {k: v["name"] for k, v in IMG_MODES.items()},
         "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "error")} for k, v in MODELS.items()},
         "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
@@ -559,14 +590,15 @@ async def txt2img(req: Request):
     prompt = (j.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(400, "missing prompt")
-    engine = j.get("engine") or default_image_engine()
-    if engine not in ("flux", "vega"):
-        engine = default_image_engine()
+    mode = j.get("mode") if j.get("mode") in IMG_MODES else img_mode()
+    engine = IMG_MODES[mode]["engine"]
+    if (RAM_GB or 8) < 14 and engine == "flux":   # FLUX 4-bit needs ~10GB — keep 8GB Macs safe
+        mode, engine = "fast", "vega"
     model_guard(engine)
     t0 = time.time()
-    png, seed = await run_in_threadpool(busy, gen_image, prompt, j.get("width"), j.get("height"), j.get("seed"), engine, j.get("steps"))
+    png, seed = await run_in_threadpool(busy, gen_image, prompt, j.get("width"), j.get("height"), j.get("seed"), engine, j.get("steps"), mode)
     ms = round((time.time() - t0) * 1000)
-    STATS[f"img_ms_{engine}"] = ms
+    STATS[f"img_ms_{mode}"] = ms
     return Response(png, media_type="image/png", headers={"X-Seed": str(seed), "X-Ms": str(ms)})
 
 
@@ -604,10 +636,11 @@ def open_folder(req: Request):
 @app.post("/api/settings")
 async def settings(req: Request):
     j = await req.json()
-    if j.get("img_engine") in ("flux", "vega"):
-        CFG["img_engine"] = j["img_engine"]
+    if j.get("img_mode") in ("auto", *IMG_MODES):
+        CFG["img_mode"] = j["img_mode"]
         save_cfg()
-    return {"ok": True, "img_engine": default_image_engine()}
+        prefetch([default_image_engine()])
+    return {"ok": True, "img_mode": img_mode(), "img_engine": default_image_engine()}
 
 
 @app.post("/api/transcode")
