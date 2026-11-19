@@ -40,10 +40,27 @@ async function saveProj(){ if (!P) return; P.thumb = P.scenes.find(s => s.img)?.
 const LS_last = id => GM.LS.set('lastProject', id);
 
 /* ---------------- media helpers ---------------- */
+const vidCache = new Map(), vidAud = new Map();
+async function vidEl(blob){
+  if (!blob) return null; let v = vidCache.get(blob); if (v) return v;
+  v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = URL.createObjectURL(blob);
+  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('เปิดคลิปวิดีโอไม่ได้')); setTimeout(res, 8000); });
+  if (!isFinite(v.duration)){   // recorder-made WebM has no duration header → seek to the end once to learn it
+    await new Promise(res => { v.ontimeupdate = () => { v.ontimeupdate = null; res(); }; v.currentTime = 1e7; setTimeout(res, 3000); });
+    v.currentTime = 0;
+  }
+  vidCache.set(blob, v); return v;
+}
+function seekVid(v, t){ return new Promise(res => { if (!v) return res(); const tt = v.duration ? t % Math.max(0.05, v.duration - 0.05) : 0; if (Math.abs(v.currentTime - tt) < 0.004 && v.readyState >= 2) return res(); const done = () => { v.removeEventListener('seeked', done); res(); }; v.addEventListener('seeked', done); v.currentTime = tt; setTimeout(done, 1500); }); }
+async function syncVideos(tl, t){   // exact frame for offline export
+  if (!tl.items.length) return; const i = sceneAt(tl, t), it = tl.items[i];
+  if (it.s.video) await seekVid(await vidEl(it.s.video), t - it.start);
+  if (i > 0 && t - it.start < TRANS && tl.items[i - 1].s.video) await seekVid(await vidEl(tl.items[i - 1].s.video), tl.items[i - 1].dur - 0.04);
+}
 async function bitmap(blob){ if (!blob) return null; if (bmpCache.has(blob)) return bmpCache.get(blob); const b = await createImageBitmap(blob); bmpCache.set(blob, b); return b; }
 async function audioBuf(blob){ if (!blob) return null; if (audCache.has(blob)) return audCache.get(blob); const b = await GM.decode(blob); audCache.set(blob, b); return b; }
-function sceneDur(s){ const a = s.audio && audCache.get(s.audio); return a ? a.duration + 0.35 : (s.dur || Math.max(2.5, Math.min(12, s.text.length / 12))); }
-async function prepare(){ for (const s of P.scenes){ await bitmap(s.img); if (s.audio) await audioBuf(s.audio); for (const x of s.sfx || []) await audioBuf(x.blob); } }
+function sceneDur(s){ const a = s.audio && audCache.get(s.audio); return a ? a.duration + 0.35 : s.video && s.vidDur ? s.vidDur : (s.dur || Math.max(2.5, Math.min(12, s.text.length / 12))); }
+async function prepare(){ for (const s of P.scenes){ await bitmap(s.img); if (s.video){ const v = await vidEl(s.video).catch(() => null); if (v && !s.vidDur) s.vidDur = v.duration || 3; if (s.vidAudio && !vidAud.has(s.video)) vidAud.set(s.video, await GM.decode(s.video).catch(() => null)); } if (s.audio) await audioBuf(s.audio); for (const x of s.sfx || []) await audioBuf(x.blob); } }
 function timeline(){ let t = 0; const out = P.scenes.map(s => { const d = sceneDur(s), o = { s, start: t, dur: d }; t += d; return o; }); return { items: out, total: t }; }
 
 /* ---------------- text layout (Thai-aware) ---------------- */
@@ -65,6 +82,13 @@ function captions(ctx, s, W, H, speechDur){
   const fs = subFont(W, H), key = s.id + '|' + W + 'x' + H + '|' + fs + '|' + s.text + '|' + speechDur.toFixed(2);
   if (capCache.has(key)) return capCache.get(key);
   ctx.font = `700 ${fs}px "Noto Sans Thai", "Prompt", sans-serif`;
+  if (s.subSegs?.length){   // transcript timings (Whisper) → captions follow the real speech
+    const out = [];
+    s.subSegs.forEach(g => { const ls = wrap(ctx, g.text, W * 0.84), ch = []; for (let i = 0; i < ls.length; i += 2) ch.push(ls.slice(i, i + 2));
+      const tot = ch.reduce((a, c) => a + c.join('').length, 0) || 1; let t = g.start;
+      ch.forEach(c => { const d = (g.end - g.start) * c.join('').length / tot; out.push({ lines: c, t0: t, t1: t + d }); t += d; }); });
+    capCache.set(key, out); return out;
+  }
   const lines = wrap(ctx, s.text, W * 0.84), caps = [];
   for (let i = 0; i < lines.length; i += 2) caps.push(lines.slice(i, i + 2));
   const total = caps.reduce((a, c) => a + c.join('').length, 0) || 1; let t = 0.1;
@@ -73,6 +97,10 @@ function captions(ctx, s, W, H, speechDur){
 }
 
 /* ---------------- drawing ---------------- */
+function drawScene(ctx, sc, W, H, p, idx){
+  if (sc.video){ const v = vidCache.get(sc.video); if (v && v.readyState >= 2){ const s0 = Math.max(W / v.videoWidth, H / v.videoHeight), w = v.videoWidth * s0, h = v.videoHeight * s0; ctx.drawImage(v, (W - w) / 2, (H - h) / 2, w, h); return; } }
+  drawImg(ctx, bmpCache.get(sc.img), W, H, sc.motion, p, idx);
+}
 function drawImg(ctx, bmp, W, H, motion, p, idx){
   if (!bmp){
     const g = ctx.createLinearGradient(0, 0, W, H), hues = [[250, 320], [190, 260], [20, 330], [160, 220]][idx % 4];
@@ -85,7 +113,17 @@ function drawImg(ctx, bmp, W, H, motion, p, idx){
   ctx.drawImage(bmp, (W - w) / 2 + dx * W, (H - h) / 2, w, h);
 }
 function rrect(ctx, x, y, w, h, r){ ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
-function drawSubs(ctx, W, H, lines){
+// how many characters of this caption have been "sung" — uses Whisper word times when the scene has them
+function karaokeChars(sc, c, lt){
+  const txt = c.lines.join(''), n = txt.length;
+  if (sc.words?.length && sc.subSegs){
+    const inCap = sc.words.filter(w => w.s >= c.t0 - 0.05 && w.s < c.t1 + 0.05), said = inCap.filter(w => w.s <= lt).map(w => w.w.trim()).join('');
+    const tot = inCap.map(w => w.w.trim()).join('').length || 1;
+    return Math.round(n * Math.min(1, said.length / tot));
+  }
+  return Math.round(n * Math.min(1, Math.max(0, (lt - c.t0) / Math.max(0.1, c.t1 - c.t0))));
+}
+function drawSubs(ctx, W, H, lines, kara){
   const fs = subFont(W, H), lh = fs * 1.35, st = P.subs.style;
   ctx.font = `700 ${fs}px "Noto Sans Thai", "Prompt", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   const yC = P.subs.pos === 'center' ? H * 0.5 : P.subs.pos === 'top' ? H * 0.2 : H * (H > W ? 0.74 : 0.82);
@@ -94,10 +132,17 @@ function drawSubs(ctx, W, H, lines){
     const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + fs * 1.1;
     ctx.fillStyle = 'rgba(0,0,0,.6)'; rrect(ctx, (W - w) / 2, y0 - lh / 2 - fs * 0.2, w, lh * lines.length + fs * 0.4, fs * 0.35); ctx.fill();
   }
+  let left = kara;
   lines.forEach((l, i) => {
     const y = y0 + i * lh;
     if (st !== 'box'){ ctx.lineJoin = 'round'; ctx.lineWidth = fs * 0.18; ctx.strokeStyle = 'rgba(0,0,0,.9)'; ctx.strokeText(l, W / 2, y); }
     ctx.fillStyle = st === 'yellow' ? '#ffe14d' : '#ffffff'; ctx.fillText(l, W / 2, y);
+    if (kara != null && left > 0){   // paint the sung part in yellow, word by word
+      const done = l.slice(0, Math.min(l.length, left)); left -= l.length;
+      const lw = ctx.measureText(l).width, x0 = W / 2 - lw / 2;
+      ctx.save(); ctx.beginPath(); ctx.rect(x0, y - lh / 2, ctx.measureText(done).width, lh); ctx.clip();
+      ctx.fillStyle = '#ffe14d'; ctx.fillText(l, W / 2, y); ctx.restore();
+    }
   });
 }
 function drawTitle(ctx, W, H, t, force){
@@ -122,13 +167,13 @@ function drawFrame(ctx, W, H, t, tl, opts = {}){
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   if (!tl.items.length){ ctx.fillStyle = '#9aa3c7'; ctx.font = `600 ${Math.round(W * 0.04)}px "Noto Sans Thai", sans-serif`; ctx.textAlign = 'center'; ctx.fillText('ยังไม่มีฉาก — กด “บท → วิดีโอ” หรือ “＋ ฉาก”', W / 2, H / 2); return; }
   const i = sceneAt(tl, t), it = tl.items[i], lt = t - it.start, p = Math.min(1, lt / it.dur);
-  if (i > 0 && lt < TRANS){ const pv = tl.items[i - 1]; drawImg(ctx, bmpCache.get(pv.s.img), W, H, pv.s.motion, 1, i - 1); ctx.globalAlpha = lt / TRANS; }
-  drawImg(ctx, bmpCache.get(it.s.img), W, H, it.s.motion, p, i); ctx.globalAlpha = 1;
+  if (i > 0 && lt < TRANS){ const pv = tl.items[i - 1]; drawScene(ctx, pv.s, W, H, 1, i - 1); ctx.globalAlpha = lt / TRANS; }
+  drawScene(ctx, it.s, W, H, p, i); ctx.globalAlpha = 1;
   const grad = ctx.createLinearGradient(0, H * 0.55, 0, H); grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,.35)'); ctx.fillStyle = grad; ctx.fillRect(0, H * 0.55, W, H * 0.45);
   if (P.subs.on && it.s.text && !opts.noSubs){
     const a = it.s.audio && audCache.get(it.s.audio), speech = a ? a.duration : it.dur - 0.2;
     const c = captions(ctx, it.s, W, H, speech).find(c => lt >= c.t0 && lt < c.t1) || (lt < 0.1 ? captions(ctx, it.s, W, H, speech)[0] : null);
-    if (c) drawSubs(ctx, W, H, c.lines);
+    if (c) drawSubs(ctx, W, H, c.lines, P.subs.style === 'karaoke' ? karaokeChars(it.s, c, lt) : null);
   }
   drawTitle(ctx, W, H, t, opts.forceTitle); drawWatermark(ctx, W, H);
 }
@@ -140,6 +185,7 @@ async function mixAudio(sr = 48000){
   const ng = oc.createGain(); ng.gain.value = P.narrVol; ng.connect(oc.destination);
   tl.items.forEach(x => {
     const b = x.s.audio && audCache.get(x.s.audio); if (b){ const s = oc.createBufferSource(); s.buffer = b; s.connect(ng); s.start(x.start + 0.1); }
+    const vb = x.s.vidAudio && vidAud.get(x.s.video); if (vb){ const s = oc.createBufferSource(), g = oc.createGain(); s.buffer = vb; g.gain.value = x.s.vidVol ?? 1; s.connect(g).connect(oc.destination); s.start(x.start, 0, x.dur); }
     (x.s.sfx || []).forEach(f => { const fb = audCache.get(f.blob); if (!fb) return; const s = oc.createBufferSource(), gg = oc.createGain(); s.buffer = fb; gg.gain.value = f.vol ?? 0.8; s.connect(gg).connect(oc.destination); s.start(Math.max(0, x.start + (f.at === 'end' ? Math.max(0, x.dur - fb.duration) : 0))); });
   });
   if (P.music){
@@ -172,7 +218,7 @@ function render(){
     <div class="card-h"><h2>🎛️ ซับ · ชื่อเรื่อง · เพลง</h2></div>
     <label class="switch" style="margin-top:0"><span>ซับไตเติลอัตโนมัติ (จากข้อความแต่ละฉาก)</span><input type="checkbox" id="stSubs" ${P.subs.on ? 'checked' : ''}></label>
     <div class="row2" style="margin-top:10px;flex-wrap:wrap">
-      <select class="mini" id="stSubStyle">${[['box', 'กล่องดำ'], ['outline', 'ขอบดำ'], ['yellow', 'เหลือง']].map(o => `<option value="${o[0]}" ${P.subs.style === o[0] ? 'selected' : ''}>สไตล์: ${o[1]}</option>`).join('')}</select>
+      <select class="mini" id="stSubStyle">${[['box', 'กล่องดำ'], ['outline', 'ขอบดำ'], ['yellow', 'เหลือง'], ['karaoke', 'คาราโอเกะ (ไฮไลต์ทีละคำ)']].map(o => `<option value="${o[0]}" ${P.subs.style === o[0] ? 'selected' : ''}>สไตล์: ${o[1]}</option>`).join('')}</select>
       <select class="mini" id="stSubPos">${[['bottom', 'ล่าง'], ['center', 'กลาง'], ['top', 'บน']].map(o => `<option value="${o[0]}" ${P.subs.pos === o[0] ? 'selected' : ''}>ตำแหน่ง: ${o[1]}</option>`).join('')}</select>
       <select class="mini" id="stSubSize">${[[0.8, 'เล็ก'], [1, 'กลาง'], [1.25, 'ใหญ่']].map(o => `<option value="${o[0]}" ${P.subs.size == o[0] ? 'selected' : ''}>ขนาด: ${o[1]}</option>`).join('')}</select>
     </div>
@@ -194,11 +240,11 @@ function renderScenes(){
   const tl = timeline();
   box.innerHTML = P.scenes.map((s, i) => `
   <div class="scene" data-i="${i}">
-    ${s.img ? `<img class="th" data-act="img" src="${URL.createObjectURL(s.img)}" alt="">` : `<div class="th" data-act="img">＋ ภาพ</div>`}
+    ${s.video ? `<video class="th" data-act="img" src="${URL.createObjectURL(s.video)}#t=0.5" muted playsinline preload="metadata"></video>` : s.img ? `<img class="th" data-act="img" src="${URL.createObjectURL(s.img)}" alt="">` : `<div class="th" data-act="img">＋ ภาพ/คลิป</div>`}
     <div class="bd">
       <textarea data-act="text" placeholder="ข้อความ/บทพากย์ของฉาก ${i + 1}">${esc(s.text)}</textarea>
       <div class="meta">
-        <span class="mini">#${i + 1} · ${sceneDur(s).toFixed(1)} วิ</span>
+        <span class="mini">#${i + 1} · ${sceneDur(s).toFixed(1)} วิ${s.video ? ' · 🎞️' : ''}</span>
         <button class="mini ${s.audio ? 'ok' : ''}" data-act="voice">🔊 ${s.audio ? 'เสียงใหม่' : 'สร้างเสียง'}</button>${licBadge(s.audLk)}
         <button class="mini" data-act="rec">🎤</button>
         <button class="mini ${(s.sfx || []).length ? 'ok' : ''}" data-act="sfx">✨ SFX${(s.sfx || []).length ? ' ' + s.sfx.length : ''}</button>
@@ -220,7 +266,7 @@ function renderScenes(){
     el.querySelector('[data-act=down]').onclick = () => { P.scenes.splice(i + 1, 0, P.scenes.splice(i, 1)[0]); touch(); renderScenes(); drawPreview(); };
     el.querySelector('[data-act=del]').onclick = () => { P.scenes.splice(i, 1); touch(); renderScenes(); drawPreview(); };
   });
-  const lic = P.scenes.every(s => licOk(s.imgLk) && licOk(s.audLk)) && licOk(P.musicLk);
+  const lic = P.scenes.every(s => licOk(s.imgLk) && licOk(s.audLk) && (!s.video || licOk(s.vidLk))) && licOk(P.musicLk);
   const info = $('#stInfo'); if (info) info.innerHTML = `${P.scenes.length} ฉาก · ยาว ${fmtT(tl.total)} · ${S.commercial ? (lic ? '💼 ทุกฉากใช้เชิงพาณิชย์ได้' : '⚠️ มีฉากที่ใช้เชิงพาณิชย์ไม่ได้ (ดูป้าย 🚫/❔)') : 'โหมดใช้ส่วนตัว'}`;
 }
 function bind(){
@@ -249,6 +295,7 @@ function bind(){
 async function drawPreview(){
   const c = $('#stCanvas'); if (!c || !P) return;
   await prepare(); const tl = timeline();
+  if (!player.playing) await syncVideos(tl, Math.min(player.t, Math.max(0, tl.total - 0.01)));
   drawFrame(c.getContext('2d'), c.width, c.height, Math.min(player.t, Math.max(0, tl.total - 0.01)), tl);
   $('#stTime').textContent = `${fmtT(player.t)} / ${fmtT(tl.total)}`;
   $('#stSeek').value = tl.total ? player.t / tl.total * 1000 : 0;
@@ -269,13 +316,16 @@ async function play(){
     if (!player.playing) return;
     player.t = player.ctx.currentTime - player.t0;
     if (player.t >= tl.total){ pause(); player.t = tl.total; drawPreview(); return; }
+    const ci = sceneAt(tl, player.t), cur = tl.items[ci];
+    vidCache.forEach((v, b) => { if (b !== cur.s.video && !v.paused) v.pause(); });
+    if (cur.s.video){ const v = vidCache.get(cur.s.video), want = (player.t - cur.start) % Math.max(0.1, (v?.duration || 1) - 0.05); if (v){ if (v.paused) v.play().catch(() => {}); if (Math.abs(v.currentTime - want) > 0.25) v.currentTime = want; } }
     drawFrame(ctx, c.width, c.height, player.t, tl);
     $('#stTime').textContent = `${fmtT(player.t)} / ${fmtT(tl.total)}`; $('#stSeek').value = player.t / tl.total * 1000;
     player.raf = requestAnimationFrame(loop);
   };
   loop();
 }
-function pause(){ player.playing = false; cancelAnimationFrame(player.raf); try { player.src?.stop(); } catch(e){} const b = $('#stPlay'); if (b) b.textContent = '▶'; }
+function pause(){ player.playing = false; cancelAnimationFrame(player.raf); vidCache.forEach(v => v.pause()); try { player.src?.stop(); } catch(e){} const b = $('#stPlay'); if (b) b.textContent = '▶'; }
 
 /* ---------------- scene media ---------------- */
 async function makeVoice(i, quiet){
@@ -303,8 +353,12 @@ async function recordVoice(i){
 }
 async function pickImage(i){
   const s = P.scenes[i];
-  const hist = (await db.all('history')).filter(h => h.kind === 'image' && h.blob).sort((a, b) => b.created - a.created).slice(0, 12);
-  openSheet(sheetHead('🖼️ ภาพของฉาก ' + (i + 1)) + `
+  const all = (await db.all('history')).filter(h => h.blob).sort((a, b) => b.created - a.created);
+  const hist = all.filter(h => h.kind === 'image').slice(0, 12), vids = all.filter(h => h.kind === 'video').slice(0, 8);
+  openSheet(sheetHead('🖼️ ภาพ / คลิปของฉาก ' + (i + 1)) + `
+    <label class="btn alt" style="width:100%;margin-bottom:8px">🎞️ ใช้คลิปวิดีโอจากเครื่อง / กล้อง<input type="file" id="piVid" accept="video/*" hidden></label>
+    ${vids.length ? `<label class="lbl2" style="margin-top:0">คลิป AI จากคลังงาน</label><div class="grid">${vids.map((h, k) => `<video data-v="${k}" src="${URL.createObjectURL(h.blob)}#t=0.5" muted playsinline preload="metadata" style="width:100%;border-radius:12px;cursor:pointer;background:#000"></video>`).join('')}</div>` : ''}
+    ${s.video ? `<label class="switch"><span>ใช้เสียงในคลิปด้วย<br><small style="color:var(--mut)">ปิดไว้ถ้าจะพากย์ทับ</small></span><input type="checkbox" id="piVA" ${s.vidAudio ? 'checked' : ''}></label><button class="btn danger sm" id="piVDel" style="margin:8px 0">ลบคลิป (กลับไปใช้ภาพ)</button>` : ''}
     <label class="lbl2" style="margin-top:0">สร้างด้วย AI (${esc(GM.lic('img-' + S.imgEngine).t)})</label>
     <textarea class="inp" id="piPrompt" style="height:80px;padding:10px">${esc(s.prompt || s.text)}</textarea>
     <p class="hint">คำอธิบายภาษาอังกฤษได้ภาพตรงกว่า · ห้ามใส่ชื่อตัวการ์ตูน/แบรนด์/คนดัง</p>
@@ -312,7 +366,12 @@ async function pickImage(i){
     <label class="btn alt" style="width:100%;margin-top:8px">📁 ใช้ภาพจากเครื่อง / กล้อง<input type="file" id="piFile" accept="image/*" hidden></label>
     ${hist.length ? `<h4>จากคลังงาน</h4><div class="grid">${hist.map((h, k) => `<img data-k="${k}" src="${URL.createObjectURL(h.blob)}" style="width:100%;border-radius:12px;cursor:pointer">`).join('')}</div>` : ''}
     ${s.img ? '<button class="btn danger sm" id="piDel" style="margin-top:12px">ลบภาพ</button>' : ''}`, el => {
-    const setImg = async (blob, lk) => { s.img = blob; s.imgLk = lk; await bitmap(blob); touch(false); closeAll(); renderScenes(); drawPreview(); };
+    const setImg = async (blob, lk) => { s.img = blob; s.imgLk = lk; s.video = null; await bitmap(blob); touch(false); closeAll(); renderScenes(); drawPreview(); };
+    const setVid = async (blob, lk) => { try { const v = await vidEl(blob); s.video = blob; s.vidLk = lk; s.vidDur = v.duration || 3; s.vidAudio = lk === 'user'; touch(); closeAll(); renderScenes(); drawPreview(); } catch(e){ toast(e.message, true); } };
+    el.querySelector('#piVid').onchange = e => { const f = e.target.files[0]; if (f) setVid(f, 'user'); };
+    el.querySelectorAll('[data-v]').forEach(v => v.onclick = () => { const h = vids[+v.dataset.v]; setVid(h.blob, h.lk || 'video-mac'); });
+    el.querySelector('#piVA')?.addEventListener('change', e => { s.vidAudio = e.target.checked; touch(); });
+    el.querySelector('#piVDel')?.addEventListener('click', () => { s.video = null; s.vidLk = null; s.vidDur = 0; touch(); closeAll(); renderScenes(); drawPreview(); });
     el.querySelector('#piGen').onclick = async () => {
       const b = el.querySelector('#piGen'); b.disabled = true; b.textContent = 'กำลังสร้างภาพ… (อาจรอคิว)';
       s.prompt = el.querySelector('#piPrompt').value.trim();
@@ -483,6 +542,7 @@ async function encodeWebCodecs(cv, ctx, W, H, tl, N, mix, onProg){
   venc.configure(vcfg);
   for (let i = 0; i < N; i++){
     if (err) throw err;
+    await syncVideos(tl, i / FPS);
     drawFrame(ctx, W, H, i / FPS, tl);
     const fr = new VideoFrame(cv, { timestamp: Math.round(i * 1e6 / FPS), duration: Math.round(1e6 / FPS) });
     venc.encode(fr, { keyFrame: i % (FPS * 2) === 0 }); fr.close();
@@ -518,7 +578,7 @@ async function encodeRecorder(cv, ctx, W, H, tl, mix, onProg){
   rec.ondataavailable = e => e.data.size && parts.push(e.data);
   const done = new Promise(r => rec.onstop = r);
   rec.start(500); await ac.resume(); const t0 = ac.currentTime + 0.05; src.start(t0);
-  await new Promise(res => { const step = () => { const t = ac.currentTime - t0; if (t >= tl.total){ res(); return; } drawFrame(ctx, W, H, Math.max(0, t), tl); onProg(t / tl.total * 0.98, `กำลังบันทึกแบบเรียลไทม์ ${fmtT(t)} / ${fmtT(tl.total)} — อย่าสลับแอป`); requestAnimationFrame(step); }; step(); });
+  await new Promise(res => { const step = () => { const t = ac.currentTime - t0; if (t >= tl.total){ res(); return; } const ci = sceneAt(tl, Math.max(0, t)), cur = tl.items[ci]; vidCache.forEach((v, b) => { if (b !== cur.s.video && !v.paused) v.pause(); }); if (cur.s.video){ const v = vidCache.get(cur.s.video); if (v){ if (v.paused){ v.currentTime = (t - cur.start) % Math.max(0.1, v.duration - 0.05); v.play().catch(() => {}); } } } drawFrame(ctx, W, H, Math.max(0, t), tl); onProg(t / tl.total * 0.98, `กำลังบันทึกแบบเรียลไทม์ ${fmtT(t)} / ${fmtT(tl.total)} — อย่าสลับแอป`); requestAnimationFrame(step); }; step(); });
   rec.stop(); await done; ac.close();
   const ext = mime.includes('mp4') ? 'mp4' : 'webm', avc = mime.includes('avc1');
   return { blob: new Blob(parts, { type: mime.split(';')[0] }), ext, vcodec: avc ? 'avc' : 'other', audio: avc ? 'mp4a.40.2' : 'opus',
@@ -626,5 +686,13 @@ async function init(){
 }
 window.addEventListener('gm:page', e => { if (e.detail !== 'studio') pause(); else drawPreview(); });
 function setMusic(file, lk, name){ if (!P){ P = newProj(name); } P.music = file; P.musicLk = lk; P.musicName = name; touch(); render(); toast(lk === 'cover' ? 'ใส่ดนตรีคัฟเวอร์แล้ว — โหมดเชิงพาณิชย์จะเตือน เพราะทำนอง/เนื้อร้องเป็นของผู้แต่ง' : 'ใส่เพลงแล้ว'); }
-window.GMStudio = { openAuto: () => { if (!P) P = newProj(); openAuto(); }, openExport, newProject, openProject, openSfxMaker, setMusic, openMusic: () => { if (!P) P = newProj(); openMusic(); } };
+async function importClip(file, lk, segments, name){
+  // one scene per transcript segment, all sharing the same clip (each scene shows its own time window)
+  P = newProj(name || 'คลิปพร้อมซับ'); const v = await vidEl(file).catch(() => null), dur = v?.duration || 10;
+  const sc = newScene(segments?.map(x => x.text).join(' ') || ''); sc.video = file; sc.vidLk = lk; sc.vidDur = dur; sc.vidAudio = true;
+  sc.words = segments?.flatMap(x => x.words || []) || []; sc.subSegs = segments || null;
+  P.scenes.push(sc); P.subs.on = !!segments?.length; P.subs.style = 'karaoke'; touch(); render(); saveProj();
+  toast('นำคลิปเข้าสตูดิโอแล้ว' + (segments?.length ? ' พร้อมซับคาราโอเกะ' : ''));
+}
+window.GMStudio = { _render: (W, H, cb) => renderVideo(W, H, cb || (() => {})), importClip, openAuto: () => { if (!P) P = newProj(); openAuto(); }, openExport, newProject, openProject, openSfxMaker, setMusic, openMusic: () => { if (!P) P = newProj(); openMusic(); } };
 init();
