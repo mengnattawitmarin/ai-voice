@@ -304,16 +304,12 @@ def get_flux():
     global _flux
     if _flux is None:
         path = ensure_model("flux")
-        from mflux import Flux1, Config  # noqa: F401
+        from mflux import Flux1, ModelConfig   # mflux 0.6.2 API (verified in CI)
         try:
-            from mflux import ModelConfig
-            _flux = Flux1(model_config=ModelConfig.from_alias("schnell"), quantize=None, local_path=path)
+            mc = ModelConfig.from_name("schnell")
         except Exception:
-            try:
-                from mflux.config.model_config import ModelConfig
-                _flux = Flux1(model_config=ModelConfig.FLUX1_SCHNELL, quantize=None, local_path=path)
-            except Exception:
-                _flux = Flux1.from_alias(alias="schnell", quantize=4)
+            mc = ModelConfig.schnell()
+        _flux = Flux1(model_config=mc, quantize=None, local_path=path)
     return _flux
 
 
