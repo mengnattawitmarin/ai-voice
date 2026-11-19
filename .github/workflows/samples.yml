@@ -1,0 +1,21 @@
+name: Build instrument samples
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['tools/build_samples.py', '.github/workflows/samples.yml']
+permissions: {contents: write}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q fluidsynth fluid-soundfont-gm ffmpeg python3-numpy
+      - run: python3 tools/build_samples.py out/samples && du -sh out/samples && ls out/samples
+      - name: Publish to samples branch
+        run: |
+          cd out
+          git init -q -b samples
+          git config user.name github-actions; git config user.email github-actions@users.noreply.github.com
+          git add -A; git commit -q -m "Instrument samples rendered from FluidR3_GM (MIT)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" samples
