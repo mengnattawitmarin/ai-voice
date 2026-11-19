@@ -1398,4 +1398,9 @@ window.dispatchEvent(new Event('gm:ready'));
 const h0 = location.hash.slice(1); go(PAGES[h0] ? h0 : 'home');
 addEventListener('hashchange', () => { const h = location.hash.slice(1); if (PAGES[h]) go(h); });
 addEventListener('keydown', e => { if (e.key === 'Escape'){ closeAll(); $('#editor').classList.remove('full'); } });
-if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+if ('serviceWorker' in navigator && location.protocol === 'https:'){
+  // when an updated service worker takes over, reload once so the new app code is used right away
+  const hadCtl = !!navigator.serviceWorker.controller; let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadCtl && !reloaded){ reloaded = true; location.reload(); } });
+  navigator.serviceWorker.register('sw.js', {updateViaCache: 'none'}).then(r => r.update()).catch(() => {});
+}
