@@ -37,6 +37,7 @@ def log(msg):
     if not msg:
         return
     STATE["log"] = (STATE["log"] + [msg])[-40:]
+    print(msg, flush=True)
     with open(LOG / "setup.log", "a", encoding="utf-8") as f:
         f.write(time.strftime("%H:%M:%S ") + msg + "\n")
 
@@ -157,7 +158,7 @@ def start_server():
     env = dict(os.environ)
     env.update({
         "GENMEDI_WEB": str(WEB), "GENMEDI_DATA": str(DATA), "GENMEDI_PORT": str(PORT),
-        "GENMEDI_BIN": str(RES / "bin"), "HF_HOME": str(DATA / "hf"), "PYTORCH_ENABLE_MPS_FALLBACK": "1",
+        "GENMEDI_BIN": os.environ.get("GENMEDI_BIN", str(RES / "bin")), "HF_HOME": str(DATA / "hf"), "PYTORCH_ENABLE_MPS_FALLBACK": "1",
         "TOKENIZERS_PARALLELISM": "false",
     })
     out = open(LOG / "server.log", "a")
@@ -191,6 +192,7 @@ def main():
         setup.shutdown()
         setup.server_close()
     child = start_server()
+    print(f"\n✅ Gen Medi กำลังเปิด — หน้าแอปจะเปิดในเบราว์เซอร์ (http://localhost:{PORT})\n   มือถือ: เมนู › เชื่อมต่อ Mac › สแกน QR บนหน้าจอ Mac · ปิดโปรแกรม: กด Ctrl+C\n   log: {LOG / 'server.log'}\n", flush=True)
 
     def stop(*_):
         try:
