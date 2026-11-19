@@ -310,7 +310,7 @@ const LIC = {
   clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + OpenVoice V2 (MIT) บน Mac'},
   'video-mac': {ok:true, t:'เชิงพาณิชย์ได้ — Wan2.1 T2V 1.3B (Apache-2.0) บน Mac'},
   cover: {ok:null, t:'ดนตรีบันทึกใหม่ของคุณ — แต่ทำนอง/เนื้อร้องเป็นลิขสิทธิ์ผู้แต่ง (ต้องขออนุญาตก่อนใช้เชิงพาณิชย์)'},
-  'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
+  'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — Z-Image Turbo / FLUX.2 Klein 4B / FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
   // keys kept so projects made with earlier versions still show their licence
   gcloud: {ok:true, t:'เชิงพาณิชย์ได้ — Google Cloud TTS'}, azure: {ok:true, t:'เชิงพาณิชย์ได้ — Microsoft Azure TTS'},
   ai: {ok:null, t:'ไม่ยืนยัน — Pollinations'}, 'clone-openvoice': {ok:true, t:'เชิงพาณิชย์ได้ — OpenVoice V2 (MIT)'},
@@ -329,7 +329,7 @@ const isUrl = t => /^https?:\/\//.test(t);
 // served by the Mac itself (localhost:7861 or its https tunnel) → same origin; otherwise paired by QR (?server=…&t=…)
 const SAME_ORIGIN = (location.port === '7861' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)) || /\.trycloudflare\.com$/.test(location.hostname);
 const MAC_SPK_DEF = [{id:'Linda', name:'ลินดา (หญิง)', gender:'f'}, {id:'Kerstin', name:'เคอร์สติน (หญิง)', gender:'f'}, {id:'Bernard', name:'แบร์นาร์ด (ชาย)', gender:'m'}, {id:'Thorsten', name:'ทอร์สเทน (ชาย)', gender:'m'}];
-const MAC_ASYNC = ['/api/tts', '/api/convert_voice', '/api/txt2img', '/api/transcode'];
+const MAC_ASYNC = ['/api/tts', '/api/convert_voice', '/api/txt2img', '/api/img_edit', '/api/transcode'];
 const MAC = {
   info: LS.get('macInfo', null), state: 'unknown',
   get base(){ return SAME_ORIGIN ? '' : (S.serverUrl || '').replace(/\/+$/, ''); },
@@ -403,7 +403,8 @@ const MAC = {
   json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
   form(path, fields, ms){ const fd = new FormData(); for (const [k, v] of Object.entries(fields)){ if (v == null) continue; if (v instanceof Blob) fd.append(k, v, v.name || 'file.' + extOf(v.type)); else fd.append(k, String(v)); } return this.call(path, {method:'POST', body: fd}, ms); },
   async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
-  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined}); const blob = await r.blob(); SPEED.learn('img-mac-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
+  async editImage(file, prompt, seed){ const t0 = performance.now(); const r = await this.form('/api/img_edit', {image: file, prompt, seed}); const blob = await r.blob(); SPEED.learn('img-mac2-edit', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
+  async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined}); const blob = await r.blob(); SPEED.learn('img-mac2-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   speakers(){ return this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF; },
 };
 const commercialVoices = () => MAC.on ? MAC.speakers().map(s => ({type:'mac', id:s.id, g:s.gender})) : [];
@@ -853,16 +854,18 @@ function defMs(k){
     case 'local-wasm': return sp.mobile ? (sp.cores >= 8 ? 70 : 140) : (sp.cores >= 8 ? 20 : 40);
     case 'mac': return MAC.info?.tts_ms_per_char || 12;
     case 'clone': return (MAC.info?.tts_ms_per_char || 12) + 25;
-    case 'img-mac': { const md = curImgMode(); return MAC.info?.['img_ms_' + md] || Math.round(({fast:16000, balanced:70000, quality:220000})[md] * 8 / Math.max(8, MAC.info?.gpu_cores || 8)); }
+    case 'img-mac': { const md = curImgMode(); return MAC.info?.['img_ms_' + md] || Math.round(({fast:60000, quality:120000, balanced:220000, lite:16000})[md] * 8 / Math.max(8, MAC.info?.gpu_cores || 8)); }
   }
   return 50;
 }
-const IMG_MODE_LABEL = {auto:'อัตโนมัติ', fast:'⚡ เร็ว', balanced:'⚖️ สมดุล', quality:'💎 คมชัดสูง'};
-function curImgMode(){ const m = S.macImg && S.macImg !== 'auto' && IMG_MODE_LABEL[S.macImg] ? S.macImg : (MAC.info?.img_mode || 'balanced'); return (MAC.info?.ram_gb || 16) < 14 && m !== 'fast' ? 'fast' : m; }
-function speedOf(k){ const m = SPEED.get(k === 'img-mac' ? 'img-mac-' + curImgMode() : k); return {v: m || defMs(k), measured: !!m}; }
+const IMG_MODE_LABEL = {auto:'อัตโนมัติ', fast:'⚡ เร็ว', quality:'💎 คมชัดสูง', balanced:'🛟 สำรอง', lite:'🪶 ประหยัด'};
+const IMG_MODE_ENGINE = {fast:'Z-Image Turbo 768px', quality:'Z-Image Turbo 1024px', balanced:'FLUX.1-schnell', lite:'Segmind-Vega'};
+const IMG_MODE_MODEL = {fast:'zimage', quality:'zimage', balanced:'flux', lite:'vega'};
+function curImgMode(){ const m = S.macImg && S.macImg !== 'auto' && IMG_MODE_LABEL[S.macImg] ? S.macImg : (MAC.info?.img_mode || 'fast'); return (MAC.info?.ram_gb || 16) < 14 && m === 'balanced' ? 'fast' : (IMG_MODE_ENGINE[m] ? m : 'fast'); }
+function speedOf(k){ const m = SPEED.get(k === 'img-mac' ? 'img-mac2-' + curImgMode() : k); return {v: m || defMs(k), measured: !!m}; }
 function whereLabel(k){
   const mac = 'Mac' + (MAC.info?.chip ? ` (${MAC.info.chip.replace(/^Apple /, '')}${MAC.info.ram_gb ? ' · ' + MAC.info.ram_gb + 'GB' : ''})` : '');
-  return ({'local-webgpu':'GPU ในมือถือเครื่องนี้', 'local-wasm':'CPU ในมือถือเครื่องนี้', 'mac': mac, 'clone': mac + ' + OpenVoice', 'img-mac': mac + ' · ' + IMG_MODE_LABEL[curImgMode()] + (curImgMode() === 'fast' ? ' (Segmind-Vega)' : ' (FLUX.1-schnell)')})[k] || k;
+  return ({'local-webgpu':'GPU ในมือถือเครื่องนี้', 'local-wasm':'CPU ในมือถือเครื่องนี้', 'mac': mac, 'clone': mac + ' + OpenVoice', 'img-mac': mac + ' · ' + IMG_MODE_LABEL[curImgMode()] + ' (' + IMG_MODE_ENGINE[curImgMode()] + ')'})[k] || k;
 }
 function estimateVoice(v, chars){
   const listen = chars / 13.3 / effRate();
@@ -1065,8 +1068,9 @@ $('#dkShare').onclick = async () => {
 /* ---------------- save to Mac + share (Android share sheet → Google Drive) ---------------- */
 const extOf = t => /png/.test(t) ? 'png' : /webp/.test(t) ? 'webp' : /wav/.test(t) ? 'wav' : /mpeg|mp3/.test(t) ? 'mp3' : /jpe?g/.test(t) ? 'jpg' : /mp4/.test(t) ? 'mp4' : /webm/.test(t) ? 'webm' : /midi/.test(t) ? 'mid' : /zip/.test(t) ? 'zip' : /text/.test(t) ? 'txt' : 'bin';
 const macSaved = new WeakSet();
-async function saveToMac(blob, kind, name){
-  if (!MAC.on || !S.macSave || !blob || macSaved.has(blob)) return;
+async function saveToMac(blob, kind, name, force){
+  if (!MAC.on || !blob) return;
+  if (!force && (!S.macSave || macSaved.has(blob))) return;
   macSaved.add(blob);
   try {
     const file = blob instanceof File ? blob : new File([blob], `genmedi.${extOf(blob.type)}`, {type: blob.type});
@@ -1075,12 +1079,16 @@ async function saveToMac(blob, kind, name){
   } catch(e){ macSaved.delete(blob); toast('บันทึกลง Mac ไม่สำเร็จ: ' + (e.message || e), true); }
 }
 let driveTipShown = LS.get('driveTip', false);
+let shareBusy = false;
 async function shareFiles(files, title){
   files = files.filter(Boolean);
   if (!files.length) return;
   if (navigator.canShare?.({files})){
     if (!driveTipShown && /Android/i.test(navigator.userAgent)){ driveTipShown = true; LS.set('driveTip', true); toast('เลือก “ไดรฟ์” (Google Drive) ในหน้าแชร์ เพื่อบันทึกขึ้น Drive', false); await sleep(900); }
+    if (shareBusy) return toast('กำลังเปิดหน้าแชร์อยู่ — ปิดหน้าต่างแชร์เดิมก่อน');
+    shareBusy = true;
     try { await navigator.share({files, title}); } catch(e){ if (e.name !== 'AbortError') toast('แชร์ไม่สำเร็จ: ' + e.message, true); }
+    finally { shareBusy = false; }
     return;
   }
   files.forEach(f => saveBlob(f, f.name));
@@ -1178,10 +1186,12 @@ async function openProc(){
     const small = (i.ram_gb || 16) < 14, gc = i.gpu_cores ? ` · GPU ${i.gpu_cores} คอร์` : '';
     const mEst = md => { const keep = S.macImg; S.macImg = md; const v = fmtDur(speedOf('img-mac').v / 1000); S.macImg = keep; return '~' + v + '/ภาพ'; };
     h += `<h4>โหมดสร้างภาพบน Mac${gc}</h4>
-      ${opt('macImg','auto',IMG_MODE_LABEL[S.macImg] ? S.macImg : 'auto','อัตโนมัติ ' + licTag('img-mac'), 'เลือกให้ตามสเปค → ' + esc(IMG_MODE_LABEL[i.img_auto] || '') + ' · ' + mEst(i.img_auto || 'balanced'))}
-      ${opt('macImg','fast',S.macImg,'⚡ เร็ว — Segmind-Vega', 'ใช้ได้ทุก Mac รวม M1 8GB · ' + mEst('fast'))}
-      ${opt('macImg','balanced',S.macImg,'⚖️ สมดุล — FLUX.1-schnell 768px', small ? 'ต้องใช้ RAM 16GB ขึ้นไป' : 'คมกว่ามาก · ' + mEst('balanced'), small)}
-      ${opt('macImg','quality',S.macImg,'💎 คมชัดสูง — FLUX.1-schnell 1024px', small ? 'ต้องใช้ RAM 16GB ขึ้นไป' : 'เหมาะกับ M1/M2 Pro·Max · ' + mEst('quality'), small)}`;
+      ${opt('macImg','auto',IMG_MODE_LABEL[S.macImg] ? S.macImg : 'auto','อัตโนมัติ ' + licTag('img-mac'), 'เลือกให้ตามสเปค → ' + esc(IMG_MODE_LABEL[i.img_auto] || '') + ' · ' + mEst(i.img_auto || 'fast'))}
+      ${opt('macImg','fast',S.macImg,'⚡ เร็ว — Z-Image Turbo 768px', 'รุ่นใหม่ ภาพสมจริง · ' + mEst('fast'))}
+      ${opt('macImg','quality',S.macImg,'💎 คมชัดสูง — Z-Image Turbo 1024px', 'ละเอียดสุด เหมาะกับ M1/M2 Pro·Max · ' + mEst('quality'))}
+      ${opt('macImg','balanced',S.macImg,'🛟 สำรอง — FLUX.1-schnell 1024px', small ? 'ต้องใช้ RAM 16GB ขึ้นไป' : 'ตัวเดิม เผื่อตัวใหม่มีปัญหา · ' + mEst('balanced'), small)}
+      ${opt('macImg','lite',S.macImg,'🪶 ประหยัด — Segmind-Vega', 'เบาสุด สำหรับ M1 8GB · ' + mEst('lite'))}
+      <p class="hint">✏️ แก้ภาพด้วยคำสั่ง ใช้ FLUX.2 Klein 4B — กดปุ่มดินสอบนภาพที่สร้างแล้ว</p>`;
     h += `<label class="switch" style="margin-top:12px"><span>บันทึกงานลง Mac อัตโนมัติ<br><small style="color:var(--mut)" id="macDir">โฟลเดอร์: ${esc(i.save_dir || '?')}</small></span><input type="checkbox" id="macSave" ${S.macSave ? 'checked' : ''}></label>
       <div class="row2" style="margin-top:10px"><button class="btn alt sm" id="macPick">เปลี่ยนโฟลเดอร์ (เลือกบน Mac)</button>${MAC.local ? '<button class="btn alt sm" id="macOpen">เปิดโฟลเดอร์</button>' : ''}</div>
       <p class="hint">จัดเก็บเป็น <code>โฟลเดอร์/images|audio|videos|music/วันที่</code></p>`;
@@ -1207,7 +1217,7 @@ async function openProc(){
       if (r){ toast('เชื่อม Mac แล้ว ✓'); openProc(); } else m.innerHTML = '<span style="color:var(--err)">เชื่อมไม่ได้ — ตรวจว่าแอปบน Mac เปิดอยู่ และใช้ลิงก์ล่าสุด</span>';
     });
     el.querySelector('#srvOff')?.addEventListener('click', () => { S.serverUrl = ''; S.macToken = ''; save(); MAC.info = null; MAC.state = 'off'; renderVoice(); renderQuota(); openProc(); });
-    el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,' + (curImgMode() === 'fast' ? 'vega' : 'flux')}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
+    el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,klein,' + IMG_MODE_MODEL[curImgMode()]}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
     el.querySelector('#macSave')?.addEventListener('change', e => { S.macSave = e.target.checked; save(); });
     el.querySelector('#macOpen')?.addEventListener('click', () => MAC.json('/api/open_folder'));
     el.querySelector('#macPick')?.addEventListener('click', async () => {
@@ -1349,15 +1359,42 @@ async function shotFile(div, url){
   return div._file = asFile(b, 'genmedi-image');
 }
 function shotActions(div, url, prompt){
+  const mac = div.querySelector('[data-mac]');
+  if (mac) mac.onclick = async () => { try { mac.disabled = true; await saveToMac(await shotFile(div, url), 'images', prompt.slice(0, 40), true); } finally { mac.disabled = false; } };
+  const ed = div.querySelector('[data-ed]');
+  if (ed) ed.onclick = () => openEdit(div, url, prompt);
   div.querySelector('[data-dl]').onclick = async () => { try { const f = await shotFile(div, url); saveBlob(f, f.name); } catch(e){ window.open(url, '_blank'); } };
   div.querySelector('[data-sh]').onclick = async () => { try { await shareFiles([await shotFile(div, url)], prompt.slice(0, 80)); } catch(e){ toast('แชร์ไม่สำเร็จ', true); } };
   div.querySelector('[data-re]').onclick = () => renderShot(div, prompt, Math.floor(Math.random() * 1e9));
 }
 function showShot(div, im, url, prompt, note){
   im.alt = prompt;
-  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลด"><svg class="i"><use href="#i-download"/></svg></button></div>${note ? `<span class="note">${esc(note)}</span>` : ''}`;
+  div.innerHTML = `<div class="acts"><button data-re aria-label="วาดใหม่"><svg class="i"><use href="#i-refresh"/></svg></button><button data-sh aria-label="แชร์"><svg class="i"><use href="#i-share"/></svg></button><button data-dl aria-label="ดาวน์โหลดลงเครื่องนี้" title="ดาวน์โหลด"><svg class="i"><use href="#i-down"/></svg></button>${MAC.on ? `<button data-mac aria-label="บันทึกลง Mac" title="บันทึกลงโฟลเดอร์บน Mac">💾</button><button data-ed aria-label="แก้ภาพด้วยคำสั่ง" title="แก้ภาพด้วยคำสั่ง"><svg class="i"><use href="#i-pencil"/></svg></button>` : ''}</div>${note ? `<span class="note">${esc(note)}</span>` : ''}`;
   div.prepend(im); div._file = null; shotActions(div, url, prompt);
   if (MAC.on && S.macSave) shotFile(div, url).then(f => saveToMac(f, 'images', prompt.slice(0, 40))).catch(() => {});
+}
+const EDIT_IDEAS = ['เปลี่ยนพื้นหลังเป็นชายหาดตอนพระอาทิตย์ตก', 'ให้คนในภาพใส่เสื้อสีแดง', 'เปลี่ยนเป็นตอนกลางคืน มีไฟนีออน', 'ทำให้เป็นสไตล์อนิเมะ', 'ลบคนออกจากภาพ'];
+function openEdit(div, url, prompt){
+  openSheet(sheetHead('✏️ แก้ภาพด้วยคำสั่ง') + `<img src="${esc(url)}" alt="" style="width:100%;border-radius:14px;max-height:240px;object-fit:contain;background:#0006">
+    <label class="lbl2" style="margin-top:10px;display:block">อยากให้เปลี่ยนอะไร (ภาษาอังกฤษได้ผลดีที่สุด แต่ภาษาไทยก็ลองได้)</label>
+    <textarea id="edP" rows="3" style="width:100%;margin-top:6px;padding:12px;border-radius:12px;background:var(--bg2,#0b1030);color:inherit;border:1px solid #fff2;font:inherit" placeholder="เช่น change the background to a beach at sunset"></textarea>
+    <div class="chips" id="edIdeas" style="margin-top:8px">${EDIT_IDEAS.map(t => `<button class="chip">${esc(t)}</button>`).join('')}</div>
+    <button class="btn" id="edGo" style="margin-top:12px">แก้ภาพบน Mac (FLUX.2 Klein)</button>
+    <p class="hint">ภาพใหม่จะต่อท้ายในตาราง ภาพเดิมไม่หาย · ครั้งแรก Mac ต้องโหลดโมเดลแก้ภาพ (~4GB)</p>`, el => {
+    el.querySelectorAll('#edIdeas .chip').forEach(b => b.onclick = () => { el.querySelector('#edP').value = b.textContent; });
+    el.querySelector('#edGo').onclick = async () => {
+      const ins = el.querySelector('#edP').value.trim(); if (!ins) return toast('พิมพ์สิ่งที่อยากให้แก้ก่อน', true);
+      closeAll();
+      const nd = document.createElement('div'); nd.className = 'shot'; div.after(nd);
+      nd.innerHTML = `<div class="ld"><div class="spin"></div>กำลังแก้ภาพบน Mac…</div>`; nd.scrollIntoView({behavior:'smooth', block:'center'});
+      try {
+        const r = await MAC.editImage(await shotFile(div, url), ins);
+        const u2 = URL.createObjectURL(r.blob);
+        showShot(nd, await loadImg(u2), u2, prompt + ' · แก้: ' + ins, 'แก้: ' + ins.slice(0, 40));
+        addHistory({kind:'image', prompt: prompt + ' · แก้: ' + ins, blob: r.blob, lk: 'img-mac'});
+      } catch(e){ nd.innerHTML = `<div class="ld">${esc(e.message)}</div>`; }
+    };
+  });
 }
 async function renderShot(div, prompt, seed){
   div.innerHTML = `<div class="ld"><div class="spin"></div>กำลังวาดบน Mac…</div>`;

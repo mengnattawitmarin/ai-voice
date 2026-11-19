@@ -59,6 +59,8 @@ VOICES.mkdir(exist_ok=True)
 KT_REPO = "wannaphong/khanomtan-tts-v1.1"         # Apache-2.0 (voices with unclear licences removed by the author)
 FLUX_REPO = os.environ.get("FLUX_REPO", "dhairyashil/FLUX.1-schnell-mflux-v0.6.2-4bit")  # Apache-2.0 weights, pre-quantized
 VEGA_REPO = "segmind/Segmind-Vega"
+ZIMAGE_REPO = os.environ.get("ZIMAGE_REPO", "filipstrand/Z-Image-Turbo-mflux-4bit")   # Apache-2.0 (Tongyi-MAI/Z-Image-Turbo), by the mflux author
+KLEIN_REPO = os.environ.get("KLEIN_REPO", "Runpod/FLUX.2-klein-4B-mflux-4bit")         # Apache-2.0 (black-forest-labs/FLUX.2-klein-4B) — 4B only; 9B is non-commercial
 
 
 # ---------------- config ----------------
@@ -105,19 +107,20 @@ def gpu_cores():
 GPU_CORES = gpu_cores()
 # image modes: which model + size + steps. Auto picks by RAM / GPU cores (base M1 8GB → fast; M1/M2 Max → quality)
 IMG_MODES = {
-    "fast":     {"engine": "vega", "base": 768,  "steps": 4, "name": "เร็ว — Segmind-Vega 768px (Mac ทุกรุ่น รวม M1 8GB)"},
-    "balanced": {"engine": "flux", "base": 768,  "steps": 2, "name": "สมดุล — FLUX.1-schnell 4-bit 768px · 2 สเต็ป (RAM 16GB+)"},
-    "quality":  {"engine": "flux", "base": 1024, "steps": 4, "name": "คมชัดสูง — FLUX.1-schnell 4-bit 1024px · 4 สเต็ป (M1/M2 Pro·Max)"},
+    # Z-Image-Turbo (Tongyi-MAI, Apache-2.0) via the latest mflux in its own venv — main engine since v2
+    "fast":     {"engine": "zimage", "base": 768,  "steps": 8, "name": "เร็ว — Z-Image Turbo 768px"},
+    "quality":  {"engine": "zimage", "base": 1024, "steps": 9, "name": "คมชัดสูง — Z-Image Turbo 1024px"},
+    # backups
+    "balanced": {"engine": "flux", "base": 1024, "steps": 4, "name": "สำรอง — FLUX.1-schnell 1024px"},
+    "lite":     {"engine": "vega", "base": 768,  "steps": 4, "name": "ประหยัด — Segmind-Vega 768px (M1 8GB)"},
 }
 
 
 def auto_mode():
-    ram, g = RAM_GB or 8, GPU_CORES or 8
-    if ram < 16:
-        return "fast"
-    if ram >= 24 and g >= 16:
-        return "quality"
-    return "balanced"
+    ram = RAM_GB or 8
+    if ram < 12:
+        return "lite"
+    return "quality" if ram >= 24 else "fast"
 STATS = {}
 LOCK = threading.Lock()   # one heavy job at a time (shared GPU memory)
 
@@ -135,7 +138,9 @@ MODELS = {
     "voice": {"name": "โคลนเสียง OpenVoice V2", "repo": "myshell-ai/OpenVoiceV2", "allow": ["converter/*"], "state": "idle", "pct": 0},
     "flux": {"name": "ภาพ FLUX.1-schnell (4-bit)", "repo": FLUX_REPO, "allow": None, "state": "idle", "pct": 0},
     "video": {"name": "วิดีโอ Wan2.1 T2V 1.3B", "repo": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "allow": None, "state": "idle", "pct": 0},
-    "vega": {"name": "ภาพ Segmind-Vega (เร็ว)", "repo": VEGA_REPO, "allow": ["*.json", "*fp16*.safetensors", "tokenizer*/*", "*.txt"], "state": "idle", "pct": 0},
+    "zimage": {"name": "ภาพ Z-Image Turbo (4-bit)", "repo": ZIMAGE_REPO, "allow": None, "state": "idle", "pct": 0},
+    "klein": {"name": "แก้ภาพ FLUX.2 Klein 4B (4-bit)", "repo": KLEIN_REPO, "allow": None, "state": "idle", "pct": 0},
+    "vega": {"name": "ภาพ Segmind-Vega (ประหยัด)", "repo": VEGA_REPO, "allow": ["*.json", "*fp16*.safetensors", "tokenizer*/*", "*.txt"], "state": "idle", "pct": 0},
 }
 
 
@@ -167,6 +172,8 @@ def ensure_model(key):
     if m.get("path") and Path(m["path"]).exists():
         return m["path"]
     m["state"] = "downloading"
+    if key in ("zimage", "klein"):   # install the new image engine while the weights download
+        threading.Thread(target=lambda: _safe(ensure_tool, "img"), daemon=True).start()
     total = 0
     try:
         info = HfApi().model_info(m["repo"], files_metadata=True)
@@ -201,6 +208,13 @@ def ensure_model(key):
         raise
     finally:
         stop.set()
+
+
+def _safe(fn, *a):
+    try:
+        fn(*a)
+    except Exception as e:  # noqa
+        print("[bg]", getattr(fn, "__name__", fn), e, flush=True)
 
 
 def prefetch(keys):
@@ -360,10 +374,51 @@ def fit_size(w, h, base):
     return max(256, int(w * s) // 64 * 64), max(256, int(h * s) // 64 * 64)
 
 
+def mflux_cli(cmd, args, timeout=1800):
+    """Run a command of the latest mflux (own venv, so it can't clash with the old mflux used for FLUX.1)."""
+    py = ensure_tool("img")
+    exe = py.parent / cmd
+    if (RAM_GB or 16) < 16:
+        args = [*args, "--low-ram"]
+    env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")))
+    r = subprocess.run([str(exe), *args], capture_output=True, text=True, timeout=timeout, env=env)
+    if r.returncode != 0:
+        tail = (r.stderr or r.stdout or "")[-500:]
+        print(f"[mflux] {cmd} failed:\n{tail}", flush=True)
+        raise RuntimeError(("RAM ไม่พอ — " if r.returncode in (-9, 137) else "") + "สร้างภาพไม่สำเร็จ: " + tail[-300:])
+
+
+def gen_zimage(prompt, W, H, seed, steps):
+    path = ensure_model("zimage")
+    out = Path(tempfile.mkdtemp(prefix="gm-img-")) / "out.png"
+    mflux_cli("mflux-generate-z-image-turbo", ["--model", path, "--base-model", "z-image-turbo", "--prompt", prompt,
+              "--width", str(W), "--height", str(H), "--seed", str(seed), "--steps", str(steps), "--output", str(out)])
+    from PIL import Image
+    return Image.open(out)
+
+
+def edit_image(src_path, prompt, seed=None, steps=4):
+    """FLUX.2 Klein 4B: change an existing picture with an instruction (keeps the picture's aspect)."""
+    from PIL import Image
+    seed = int(seed) if seed not in (None, "", 0) else random.randint(1, 2**31 - 2)
+    with Image.open(src_path) as im:
+        w, h = im.size
+    base = 1024 if (RAM_GB or 16) >= 16 else 768
+    W, H = fit_size(w, h, base)
+    path = ensure_model("klein")
+    out = Path(tempfile.mkdtemp(prefix="gm-edit-")) / "out.png"
+    mflux_cli("mflux-generate-flux2-edit", ["--model", path, "--base-model", "flux2-klein-4b", "--image-paths", str(src_path),
+              "--prompt", prompt, "--width", str(W), "--height", str(H), "--seed", str(seed), "--steps", str(steps), "--output", str(out)])
+    return out.read_bytes(), seed
+
+
 def gen_image(prompt, w, h, seed, engine, steps=None, mode=None):
     seed = int(seed) if seed not in (None, "", 0) else random.randint(1, 2**31 - 2)
     md = IMG_MODES.get(mode or img_mode(), IMG_MODES["fast"])
-    if engine == "flux":
+    if engine == "zimage":
+        W, H = fit_size(w, h, md["base"] if md["engine"] == "zimage" else 1024)
+        pil = gen_zimage(prompt, W, H, seed, int(steps or md.get("steps") or 9))
+    elif engine == "flux":
         from mflux import Config
         W, H = fit_size(w, h, md["base"] if md["engine"] == "flux" else 768)
         img = get_flux().generate_image(seed=seed, prompt=prompt, config=Config(num_inference_steps=int(steps or md["steps"]), height=H, width=W))
@@ -388,25 +443,35 @@ VIDEO_MODES = {   # Wan needs 4k+1 frames
                  "max_frames": {32: 17, 48: 33, 64: 41}},
 }
 MLXGEN_MODEL = "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit"
+VENV_IMG = DATA / "venv-img"       # latest mflux (Z-Image, FLUX.2 Klein) — kept apart from the pinned mflux 0.6.2 of FLUX.1
 VENV_TOOLS = DATA / "venv-tools"   # separate env for MLX tools so their MLX version can't clash with mflux
-TOOL_PKGS = {"mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
-TOOL_NAMES = {"mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
+TOOL_PKGS = {"img": ["mflux>=0.24,<0.30"], "mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
+TOOL_NAMES = {"img": "ตัวสร้างภาพรุ่นใหม่ (mflux)", "mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
 JOBS = {}
 QUEUE = []
 QCOND = threading.Condition()
 
 
+TOOL_LOCK = threading.Lock()
+
+
 def ensure_tool(tool, j=None):
+    with TOOL_LOCK:   # never run two pip installs into the same venv at once
+        return _ensure_tool(tool, j)
+
+
+def _ensure_tool(tool, j=None):
     """Install an optional tool into venv-tools on first use (no Terminal needed)."""
-    py = VENV_TOOLS / "bin" / "python"
-    mark = VENV_TOOLS / f".ok-{tool}"
+    venv_dir = VENV_IMG if tool == "img" else VENV_TOOLS
+    py = venv_dir / "bin" / "python"
+    mark = venv_dir / f".ok-{tool}"
     if mark.exists() and py.exists():
         return py
     if j is not None:
         j.update(state="loading", msg=f"ติดตั้ง{TOOL_NAMES.get(tool, tool)}ครั้งแรก (ครั้งเดียว)…")
     if not py.exists():
         import venv as _venv
-        _venv.EnvBuilder(with_pip=True).create(str(VENV_TOOLS))
+        _venv.EnvBuilder(with_pip=True).create(str(venv_dir))
     r = subprocess.run([str(py), "-m", "pip", "install", "-q", "-U", *TOOL_PKGS[tool]], capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"ติดตั้ง{TOOL_NAMES.get(tool, tool)}ไม่สำเร็จ: " + (r.stderr or r.stdout)[-300:])
@@ -668,7 +733,7 @@ async def auth(req: Request, call_next):
 
 # Long requests through the Cloudflare tunnel are cut at ~100s, and the phone then only sees "can't reach Mac".
 # With header X-GM-Async the request runs in the background as a job; the phone polls /api/jobs/{id} and fetches the result.
-ASYNC_PATHS = {"/api/tts", "/api/convert_voice", "/api/txt2img", "/api/transcode"}
+ASYNC_PATHS = {"/api/tts", "/api/convert_voice", "/api/txt2img", "/api/img_edit", "/api/transcode"}
 
 
 async def _replay(jid, scope, body):
@@ -881,6 +946,22 @@ async def txt2img(req: Request):
     ms = round((time.time() - t0) * 1000)
     STATS[f"img_ms_{mode}"] = ms
     return Response(png, media_type="image/png", headers={"X-Seed": str(seed), "X-Ms": str(ms)})
+
+
+@app.post("/api/img_edit")
+async def img_edit(image: UploadFile = File(...), prompt: str = Form(...), seed: str = Form("")):
+    prompt = prompt.strip()
+    if not prompt:
+        raise HTTPException(400, "missing prompt")
+    model_guard("klein")
+    src = Path(tempfile.mkdtemp(prefix="gm-src-")) / "in.png"
+    from PIL import Image
+    Image.open(io.BytesIO(await image.read())).convert("RGB").save(src)
+    t0 = time.time()
+    png, sd = await run_in_threadpool(busy, edit_image, str(src), prompt, seed or None)
+    ms = round((time.time() - t0) * 1000)
+    STATS["img_ms_edit"] = ms
+    return Response(png, media_type="image/png", headers={"X-Seed": str(sd), "X-Ms": str(ms)})
 
 
 @app.post("/api/save")

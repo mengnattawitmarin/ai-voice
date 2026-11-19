@@ -150,7 +150,10 @@ input[type=range]::-moz-range-thumb{width:22px;height:22px;border:0;border-radiu
 .shot{position:relative;border-radius:16px;overflow:hidden;background:rgba(6,10,32,.6);border:1px solid var(--line);min-height:150px;display:grid;place-items:center}
 .shot img{display:block;width:100%;height:auto}
 .shot .ld{color:var(--mut);font-size:13px;text-align:center;padding:20px}
-.shot .acts{position:absolute;right:8px;bottom:8px;display:flex;gap:6px}
+.shot .acts{position:absolute;left:6px;right:6px;bottom:6px;display:flex;gap:5px;justify-content:flex-end;flex-wrap:wrap}
+.shot .acts button{font-size:16px}
+.shot .note{position:absolute;left:8px;top:8px;right:8px;font-size:12px;background:rgba(6,10,32,.7);padding:3px 8px;border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid:not(.one) .shot .acts button{width:32px;height:32px}
 .shot .acts button{width:38px;height:38px;border-radius:50%;background:rgba(6,10,32,.75);display:grid;place-items:center;backdrop-filter:blur(6px)}
 .shot .acts svg{width:19px;height:19px}
 .spin{width:28px;height:28px;border-radius:50%;border:3px solid rgba(129,140,248,.25);border-top-color:#818cf8;animation:sp 1s linear infinite;margin:0 auto 8px}
