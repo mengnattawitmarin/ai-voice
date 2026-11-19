@@ -145,7 +145,7 @@ def install():
         pip = [venv_py(), "-m", "pip", "install", "--disable-pip-version-check", "--progress-bar", "off"]
         run(pip + ["-U", "pip", "wheel", "setuptools"], "อัปเดตตัวติดตั้ง", 5, 8, 20)
         run(pip + ["-r", REQ], "ติดตั้งไลบรารี AI (นานที่สุด)", 8, 92, 420)
-        run(pip + ["--no-deps", "git+https://github.com/myshell-ai/OpenVoice.git"], "ติดตั้ง OpenVoice (โคลนเสียง)", 92, 98, 15)
+        run(pip + ["--no-deps", "https://github.com/myshell-ai/OpenVoice/archive/refs/heads/main.zip"], "ติดตั้ง OpenVoice (โคลนเสียง)", 92, 98, 15)
         (VENV / ".genmedi-ready").write_text(req_hash())
         STATE.update(stage="ติดตั้งเสร็จแล้ว กำลังเปิดแอป…", pct=100, ready=True)
     except Exception as e:  # noqa
@@ -202,9 +202,32 @@ def main():
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    if wait_port(PORT) and not setup:
-        webbrowser.open(f"http://localhost:{PORT}/")
-    child.wait()
+    t0 = time.time()
+    while time.time() - t0 < 240 and child.poll() is None and not port_busy(PORT):
+        time.sleep(0.5)
+    if child.poll() is None and port_busy(PORT):
+        if not setup:
+            webbrowser.open(f"http://localhost:{PORT}/")
+        child.wait()
+    show_server_error(child)
+
+
+def show_server_error(child):
+    try:
+        child.kill()
+    except Exception:
+        pass
+    try:
+        tail = (LOG / "server.log").read_text(errors="replace").splitlines()[-30:]
+    except Exception:
+        tail = []
+    STATE.update(stage="เซิร์ฟเวอร์ปิดตัวเพราะเกิดข้อผิดพลาด", error="เซิร์ฟเวอร์เปิดไม่สำเร็จ — ถ่ายรูปหน้านี้ส่งให้ผู้พัฒนา", log=tail, pct=100)
+    log("SERVER EXIT code=%s" % child.returncode)
+    srv = ThreadingHTTPServer(("127.0.0.1", PORT), SetupHandler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    webbrowser.open(f"http://localhost:{PORT}/")
+    while True:
+        time.sleep(3600)
 
 
 if __name__ == "__main__":
