@@ -54,9 +54,21 @@ def venv_py():
     return VENV / "bin" / "python"
 
 
+def venv_ok():
+    """The venv points at the Python inside the app — if the app was moved, rebuild it."""
+    try:
+        return subprocess.run([str(venv_py()), "-c", "import fastapi"], capture_output=True, timeout=60).returncode == 0
+    except Exception:
+        return False
+
+
 def ready():
     m = VENV / ".genmedi-ready"
-    return venv_py().exists() and m.exists() and m.read_text().strip() == req_hash()
+    ok = venv_py().exists() and m.exists() and m.read_text().strip() == req_hash() and venv_ok()
+    if not ok and VENV.exists() and venv_py().exists() and not venv_ok():
+        import shutil
+        shutil.rmtree(VENV, ignore_errors=True)
+    return ok
 
 
 # ---------- tiny setup web page ----------
