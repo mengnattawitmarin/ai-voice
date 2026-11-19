@@ -20,7 +20,7 @@ jobs:
         run: |
           set -e
           mkdir -p dl
-          python3 -m pip install -q uv
+          python3 -m pip install -q --break-system-packages --user uv
           python3 -m uv python install 3.11 --install-dir "$PWD/dl/py"
           PYDIR=$(ls -d dl/py/cpython-3.11*aarch64* | head -1); echo "python dir: $PYDIR"; ls "$PYDIR/bin" | head
           mkdir -p dl/pyroot && cp -R "$PYDIR" dl/pyroot/python
