@@ -23,8 +23,11 @@ jobs:
           python3 -m pip install -q --break-system-packages --user uv
           python3 -m uv python install 3.11 --install-dir "$PWD/dl/py"
           PYDIR=$(ls -d dl/py/cpython-3.11*aarch64* | head -1); echo "python dir: $PYDIR"; ls "$PYDIR/bin" | head
-          mkdir -p dl/pyroot && cp -R "$PYDIR" dl/pyroot/python
+          mkdir -p dl/pyroot && cp -RL "$PYDIR" dl/pyroot/python   # -L: uv's bin/python3 links point into dl/py — copy real files so the app works on any Mac
+          echo "symlinks left:"; find dl/pyroot -type l | head
+          dl/pyroot/python/bin/python3 -c "import sys; print('bundled', sys.version)"
           tar -czf dl/python.tgz -C dl/pyroot python
+          rm -rf dl/py dl/pyroot                   # so the smoke test can't silently use the build machine's copy
           curl -sSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz -o dl/cf.tgz
       - name: Build Gen Medi.app
         run: |
