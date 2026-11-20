@@ -174,6 +174,9 @@ def ensure_model(key):
     m = MODELS[key]
     if m.get("path") and Path(m["path"]).exists():
         return m["path"]
+    free = shutil.disk_usage(DATA).free / 1e9
+    if free < 12:
+        raise HTTPException(507, f"พื้นที่ดิสก์เหลือ {free:.0f} GB — ต้องมีอย่างน้อย 12 GB ก่อนดาวน์โหลดโมเดล (ลบไฟล์ใน Mac หรือย้ายงานไป external drive)")
     m["state"] = "downloading"
     if key in ("zimage", "klein"):   # install the new image engine while the weights download
         threading.Thread(target=lambda: _safe(ensure_tool, "img"), daemon=True).start()
@@ -635,6 +638,124 @@ def submit(kind, fn, args, meta=None):
     return jid
 
 
+# ---------------- 🛡️ hardware guard: protect battery, SSD and thermals ----------------
+# Apple Silicon throttles itself before heat can do damage; the real wear risks are long heavy runs on battery,
+# swap storms that write to the SSD, and filling the disk. Training is paused (SIGSTOP, not killed) until conditions are OK.
+GUARD = {"on": True, "paused": False, "reason": "", "therm": 100, "batt": None, "ac": True, "mem_free": None, "disk_gb": None, "t": 0}
+
+
+def guard_start_check():
+    g = read_health()
+    if GUARD["on"] and g.get("batt") is not None and not g.get("ac") and g["batt"] < 60:
+        raise HTTPException(400, f"เสียบสายชาร์จก่อนเทรนนะ (แบตเหลือ {g['batt']}%) — การเทรนนานหลายชั่วโมงบนแบตทำให้แบตเสื่อมเร็ว")
+    if g.get("disk_gb") is not None and g["disk_gb"] < 15:
+        raise HTTPException(400, f"พื้นที่ดิสก์เหลือ {g['disk_gb']} GB — ควรมีอย่างน้อย 15 GB ก่อนเทรน")
+
+
+def proc_signal(p, sig):
+    try:
+        os.killpg(os.getpgid(p.pid), sig)
+    except Exception:  # noqa
+        try:
+            p.send_signal(sig)
+        except Exception:  # noqa
+            pass
+
+
+def read_health():
+    g = {}
+    try:
+        out = subprocess.run(["pmset", "-g", "therm"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", out)
+        g["therm"] = int(m.group(1)) if m else 100
+    except Exception:  # noqa
+        g["therm"] = 100
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
+        g["ac"] = "AC Power" in out.splitlines()[0] if out else True
+        m = re.search(r"(\d+)%", out)
+        g["batt"] = int(m.group(1)) if m else None
+    except Exception:  # noqa
+        g["ac"], g["batt"] = True, None
+    try:
+        out = subprocess.run(["memory_pressure", "-Q"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r"free percentage:\s*(\d+)%", out)
+        g["mem_free"] = int(m.group(1)) if m else None
+    except Exception:  # noqa
+        g["mem_free"] = None
+    try:
+        g["disk_gb"] = round(shutil.disk_usage(DATA).free / 1e9, 1)
+    except Exception:  # noqa
+        g["disk_gb"] = None
+    return g
+
+
+def guard_reason(g):
+    if g.get("batt") is not None and not g.get("ac") and g["batt"] < 30:
+        return f"แบตเหลือ {g['batt']}% และไม่ได้เสียบสายชาร์จ — เสียบชาร์จแล้วจะทำต่อเอง"
+    if g.get("therm", 100) < 70:
+        return f"เครื่องร้อน (CPU ถูกจำกัดเหลือ {g['therm']}%) — พักให้เย็นก่อน"
+    if g.get("mem_free") is not None and g["mem_free"] < 8:
+        return f"หน่วยความจำเหลือน้อย ({g['mem_free']}%) — ปิดโปรแกรมอื่นบ้าง กันการเขียน swap ลง SSD หนักเกินไป"
+    if g.get("disk_gb") is not None and g["disk_gb"] < 5:
+        return f"พื้นที่ดิสก์เหลือ {g['disk_gb']} GB"
+    return ""
+
+
+def training_procs():
+    for reg in ("TRAIN", "VOXTRAIN", "LORA_TRAIN"):
+        for t in (globals().get(reg) or {}).values():
+            if t.get("proc") is not None and t["proc"].poll() is None:
+                yield t
+
+
+def guard_loop():
+    cool_until = 0
+    while True:
+        try:
+            g = read_health()
+            GUARD.update(g, t=int(time.time()))
+            why = guard_reason(g) if GUARD["on"] else ""
+            if why and "ร้อน" in why:
+                cool_until = time.time() + 180   # stay paused a few minutes after heat, not just until the next reading
+            if not why and time.time() < cool_until and GUARD["on"]:
+                why = "พักให้เครื่องเย็นลง"
+            was = GUARD["paused"]
+            GUARD.update(paused=bool(why), reason=why)
+            for t in training_procs():
+                if why and not t.get("paused"):
+                    proc_signal(t["proc"], signal.SIGSTOP)
+                    t.update(paused=True, msg_before=t.get("msg"), msg="⏸ หยุดชั่วคราว: " + why)
+                elif not why and t.get("paused"):
+                    proc_signal(t["proc"], signal.SIGCONT)
+                    t.update(paused=False, msg=t.pop("msg_before", "กำลังเทรน…"))
+            if why != "" and not was:
+                print("[guard] pause:", why, flush=True)
+        except Exception as e:  # noqa
+            print("[guard]", e, flush=True)
+        time.sleep(20)
+
+
+threading.Thread(target=guard_loop, daemon=True).start()
+
+
+@app.get("/api/guard")
+def guard_get():
+    return GUARD
+
+
+@app.post("/api/guard")
+def guard_set(on: int = Form(1)):
+    GUARD["on"] = bool(on)
+    if not GUARD["on"]:
+        for t in training_procs():
+            if t.get("paused"):
+                proc_signal(t["proc"], signal.SIGCONT)
+                t.update(paused=False, msg=t.pop("msg_before", "กำลังเทรน…"))
+        GUARD.update(paused=False, reason="")
+    return GUARD
+
+
 def queue_worker():
     while True:
         with QCOND:
@@ -646,6 +767,9 @@ def queue_worker():
             if j:
                 j.update(state="error", msg="ยกเลิกแล้ว")
             continue
+        while GUARD["on"] and GUARD["paused"] and not j.get("cancel"):
+            j.update(state="queued", msg="🛡️ รอให้เครื่องพร้อม: " + GUARD["reason"])
+            time.sleep(10)
         try:
             fn(jid, *args)
         except Exception as e:  # noqa
@@ -959,7 +1083,7 @@ def info(req: Request):
         "img_mode": img_mode(), "img_mode_set": CFG.get("img_mode") or "auto", "img_auto": auto_mode(),
         "img_modes": {k: v["name"] for k, v in IMG_MODES.items()},
         "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "mb", "total", "error")} for k, v in MODELS.items()},
-        "loras": lora_list(), "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
+        "loras": lora_list(), "guard": GUARD, "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
         "speakers": vox_speakers() + my_speakers() + (kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()]),
         "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
@@ -1722,7 +1846,9 @@ def lora_status(name: str):
     imgs = sorted(p.name for p in (d / "images").glob("*.png"))
     t = {k: v for k, v in (LORA_TRAIN.get(d.name) or {}).items() if k != "proc"} or None
     prev = sorted(p.name for p in (d / "previews").glob("*.png")) if (d / "previews").exists() else []
-    return {"name": d.name, "images": imgs, "meta": meta, "train": t, "ready": (LORAS / f"{d.name}.safetensors").exists(), "previews": prev}
+    caps = sum(1 for p in (d / "images").glob("*.txt"))
+    imp = json.loads((d / "import.json").read_text()) if (d / "import.json").exists() else None
+    return {"name": d.name, "images": imgs, "meta": meta, "train": t, "ready": (LORAS / f"{d.name}.safetensors").exists(), "previews": prev, "captions": caps, "import": imp}
 
 
 @app.get("/api/lora/{name}/preview/{fn}")
@@ -1820,12 +1946,67 @@ async def lora_video(name: str, video: UploadFile = File(...), n: int = Form(25)
 @app.delete("/api/lora/{name}/images/{fn}")
 def lora_image_del(name: str, fn: str):
     (lora_dir(name) / "images" / Path(fn).name).unlink(missing_ok=True)
+    (lora_dir(name) / "images" / (Path(fn).stem + ".txt")).unlink(missing_ok=True)
     return {"ok": True}
 
 
 @app.get("/api/lora/{name}/images/{fn}")
 def lora_image_get(name: str, fn: str):
     return FileResponse(lora_dir(name) / "images" / Path(fn).name, media_type="image/png")
+
+
+def lora_caption(img, trig, fallback):
+    """Per-image caption from an imported dataset (images/<stem>.txt), always starting with the trigger word."""
+    f = img.with_suffix(".txt")
+    if f.exists():
+        c = re.sub(r"\s+", " ", f.read_text(errors="ignore")).strip()
+        c = re.sub(r"\[?TRIGGER\]?|<trigger>|\{trigger\}", trig, c, flags=re.I)
+        if c:
+            return c if trig in c else f"{trig}, {c}"
+    return fallback
+
+
+@app.post("/api/lora/{name}/zip")
+async def lora_zip(name: str, file: UploadFile = File(...)):
+    """Import a prepared dataset: images + same-name .txt captions (+ optional dataset.json with label/kind/description)."""
+    import zipfile
+    from PIL import Image, ImageOps
+    d = lora_dir(name)
+    raw = await file.read()
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "ไฟล์ไม่ใช่ zip")
+    names = [n for n in z.namelist() if not n.startswith("__MACOSX") and not n.endswith("/")]
+    caps = {Path(n).stem: z.read(n).decode("utf-8", "ignore") for n in names if n.lower().endswith(".txt")}
+    info = {}
+    for n in names:
+        if Path(n).name.lower() in ("dataset.json", "meta.json"):
+            try:
+                info = json.loads(z.read(n).decode("utf-8", "ignore"))
+            except Exception:  # noqa
+                pass
+    added = skipped = 0
+    for n in names:
+        if Path(n).suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+            continue
+        try:
+            im = ImageOps.exif_transpose(Image.open(io.BytesIO(z.read(n)))).convert("RGB")
+        except Exception:  # noqa
+            skipped += 1
+            continue
+        s_ = min(1.0, 1024 / max(im.size))
+        if s_ < 1:
+            im = im.resize((int(im.width * s_), int(im.height * s_)), Image.LANCZOS)
+        stem = re.sub(r"[^a-zA-Z0-9_-]+", "-", Path(n).stem)[:40] or secrets.token_hex(4)
+        im.save(d / "images" / f"{stem}.png")
+        if Path(n).stem in caps:
+            (d / "images" / f"{stem}.txt").write_text(caps[Path(n).stem].strip())
+        added += 1
+    if info:
+        (d / "import.json").write_text(json.dumps(info, ensure_ascii=False))
+    return {"added": added, "skipped": skipped, "captions": sum(1 for p in (d / "images").glob("*.txt")), "info": info,
+            "count": len(list((d / "images").glob("*.png")))}
 
 
 def lora_train_worker_zimage(name, kind, desc, label, preset):
@@ -1840,7 +2021,7 @@ def lora_train_worker_zimage(name, kind, desc, label, preset):
     data.mkdir()
     for p in imgs:
         shutil.copy(p, data / p.name)
-        (data / (p.stem + ".txt")).write_text(cap)
+        (data / (p.stem + ".txt")).write_text(lora_caption(p, trig, cap))
     out = d / "train-z"
     shutil.rmtree(out, ignore_errors=True)
     meta = {"name": d.name, "label": label or d.name, "trigger": trig, "kind": kind, "caption": cap, "images": len(imgs), "engine": "zimage"}
@@ -1857,7 +2038,7 @@ def lora_train_worker_zimage(name, kind, desc, label, preset):
         cmd.append("--low-ram")
     env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1")
     t.update(state="running", msg="กำลังเตรียม… (ครั้งแรกดาวน์โหลดโมเดล Z-Image สำหรับเทรนหลาย GB)", started=time.time())
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d))
+    p = subprocess.Popen(["nice", "-n", "10", *cmd], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d), start_new_session=True)
     t["proc"] = p
     try:
         subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1939,7 +2120,7 @@ def lora_train_worker(name, kind, desc, label, steps, fast=False):
     data.mkdir()
     for p in imgs:   # mflux reads a sibling .txt caption per image
         shutil.copy(p, data / p.name)
-        (data / (p.stem + ".txt")).write_text(cap)
+        (data / (p.stem + ".txt")).write_text(lora_caption(p, trig, cap))
     epochs = max(4, math.ceil(steps / max(1, len(imgs))))
     out = d / "train"
     rank = 8 if fast else 16
@@ -1959,7 +2140,7 @@ def lora_train_worker(name, kind, desc, label, steps, fast=False):
     py = ensure_tool("img")
     env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1")
     t.update(state="running", msg="กำลังเตรียม… (ครั้งแรกดาวน์โหลดโมเดลฐาน FLUX.2 Klein Base 4B หลาย GB)", started=time.time(), total=epochs * len(imgs))
-    p = subprocess.Popen([str(py.parent / "mflux-train"), "--config", str(d / "train.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d))
+    p = subprocess.Popen(["nice", "-n", "10", str(py.parent / "mflux-train"), "--config", str(d / "train.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d), start_new_session=True)
     t["proc"] = p
     try:
         subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2046,6 +2227,7 @@ def lora_export(name):
 @app.post("/api/lora/{name}/train")
 def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200), fast: int = Form(0),
                engine: str = Form("zimage"), preset: str = Form("balanced")):
+    guard_start_check()
     d = lora_dir(name)
     if (LORA_TRAIN.get(d.name) or {}).get("state") == "running":
         raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
@@ -2071,7 +2253,8 @@ def lora_stop(name: str):
     t = LORA_TRAIN.get(lora_dir(name).name) or {}
     if t.get("proc"):
         t["stop"] = True
-        t["proc"].terminate()
+        proc_signal(t["proc"], signal.SIGCONT)
+        proc_signal(t["proc"], signal.SIGTERM)
     return {"ok": True}
 
 
@@ -2565,8 +2748,8 @@ def vox_train_worker(name, steps=None):
     env = dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK="1", HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1",
                PYTHONPATH=str(src / "src") + os.pathsep + str(src))
     log = open(work / "train.log", "a", encoding="utf8")
-    p = subprocess.Popen([str(py), str(src / "scripts" / "train_voxcpm_finetune.py"), "--config_path", str(work / "lora.yaml")],
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, cwd=str(src))
+    p = subprocess.Popen(["nice", "-n", "10", str(py), str(src / "scripts" / "train_voxcpm_finetune.py"), "--config_path", str(work / "lora.yaml")],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, cwd=str(src), start_new_session=True)
     t.update(proc=p, msg="กำลังเทรน…", started=time.time())
     try:
         subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2635,6 +2818,7 @@ def start_vox_train(name, steps=None, auto=False):
 
 @app.post("/api/ds/{name}/voxtrain")
 def ds_voxtrain(name: str, steps: int = Form(0)):
+    guard_start_check()
     model_guard("vox")
     start_vox_train(name, steps or None)
     return {"ok": True}
@@ -2645,6 +2829,7 @@ def ds_voxtrain_stop(name: str):
     t = VOXTRAIN.get(ds_dir(name).name) or {}
     if t.get("proc"):
         t["stop"] = True
+        proc_signal(t["proc"], signal.SIGCONT)
         t["proc"].send_signal(signal.SIGINT)   # the trainer saves a checkpoint on SIGINT/SIGTERM
     return {"ok": True}
 
@@ -2877,8 +3062,8 @@ def train_worker(name, steps, device):
         env["CUDA_VISIBLE_DEVICES"] = ""
         env["PYTORCH_MPS_DISABLE"] = "1"
     log = open(work / "train.log", "a", encoding="utf8")
-    p = subprocess.Popen([sys.executable, str(work / "train.py"), str(work / "args.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, env=env, cwd=str(work))
+    p = subprocess.Popen(["nice", "-n", "10", sys.executable, str(work / "train.py"), str(work / "args.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                         text=True, env=env, cwd=str(work), start_new_session=True)
     t.update(state="running", proc=p, device=device, clips=len(items), msg="เตรียมข้อมูล…", started=time.time(), judging=True)
     sup = threading.Thread(target=lambda: _safe(train_supervisor, name, t), daemon=True)
     sup.start()
@@ -2997,7 +3182,8 @@ def ds_train_stop(name: str):
     p = t.get("proc")
     if p:
         t["stop"] = True
-        p.terminate()
+        proc_signal(p, signal.SIGCONT)
+        proc_signal(p, signal.SIGTERM)
     return {"ok": True}
 
 
