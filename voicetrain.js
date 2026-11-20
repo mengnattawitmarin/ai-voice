@@ -3,7 +3,7 @@
    2) Whisper checks every clip against its sentence
    3) the Mac fine-tunes KhanomTan v1.1 (Apache-2.0) with your voice → a clear native-Thai voice you own */
 const GM = window.GM, $ = s => document.querySelector(s);
-const DS = 'mine', TARGET = 800, MIN_TRAIN = 300;
+const DS = 'mine', TARGET = 800, MIN_TRAIN = 100, KT_MIN = 300;
 const st = Object.assign({custom: [], ai: [], skip: []}, GM.LS.get('vtSet', {}));
 const saveSt = () => GM.LS.set('vtSet', st);
 let base = [], status = null, cur = null, rec = null, lastKey = null, busy = false;
@@ -68,7 +68,7 @@ function shell(root){
   <div class="card"><div class="card-h"><h2>🧠 เทรนโมเดล</h2></div>
     <label class="lbl2" style="margin-top:0">เทรนอัตโนมัติ</label>
     <div class="chips" id="vtAuto"><button class="chip" data-v="off">ปิด</button><button class="chip" data-v="night">🌙 ตอนกลางคืน (เที่ยงคืน–6 โมง)</button><button class="chip" data-v="now">ทันทีเมื่อถึงเกณฑ์</button></div>
-    <p class="hint">เริ่มเองเมื่อครบ 300 ประโยค แล้วเทรนต่อเองทุกครั้งที่อัดเพิ่มอีก 100 ประโยค (ตอน Mac ว่าง) · ตรวจคุณภาพด้วย Whisper ให้เองทุก 50 ประโยค</p>
+    <p class="hint">เทรน VoxCPM2 เองเมื่อครบ 100 ประโยค แล้วเทรนใหม่เองทุกครั้งที่อัดเพิ่มอีก 100 ประโยค (ตอน Mac ว่าง) · ตรวจคุณภาพด้วย Whisper ให้เองทุก 50 ประโยค</p>
     <label class="switch"><span>⚡ โหมดเร็ว<br><small style="color:var(--mut)">ล็อกส่วนอ่านตัวอักษรไทยที่โมเดลรู้แล้ว เทรนเฉพาะเสียงและจังหวะ</small></span><input type="checkbox" id="vtFast"></label>
     <div id="vtTrain" style="margin-top:12px"></div></div>
   <div class="card"><div class="card-h"><h2>📦 สำรอง / ย้ายไปเครื่องอื่น</h2></div>
@@ -234,8 +234,8 @@ function renderTrain(){
   const box = $('#vtTrain'); if (!box) return;
   const c = status?.count || 0, good = c - (status?.bad || 0), tr = status?.train, md = status?.model;
   const running = tr && (tr.state === 'running' || tr.state === 'starting');
-  let h = '';
-  if (c >= 3) h += `<div class="item" style="display:block;margin-bottom:10px"><b>⚡ ใช้เสียงคุณได้เลย ไม่ต้องรอเทรน (VoxCPM2)</b><br><small>VoxCPM2 โคลนเสียงจากประโยคที่คุณอัดไว้ · ไทยชัด · ครั้งแรก Mac โหลดโมเดล ~5GB</small>
+  let h = '', vx = '';
+  if (c >= 3) vx += `<div class="item" style="display:block;margin-bottom:10px"><b>⚡ ใช้เสียงคุณได้เลย ไม่ต้องรอเทรน (VoxCPM2)</b><br><small>VoxCPM2 โคลนเสียงจากประโยคที่คุณอัดไว้ · ไทยชัด · ครั้งแรก Mac โหลดโมเดล ~5GB</small>
       <textarea id="vxTry" rows="2" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">สวัสดีครับ วันนี้ผมจะมาเล่าเรื่องที่น่าสนใจให้ฟังกัน ฟังเสียงนี้แล้วเหมือนผมไหมครับ</textarea>
       <div class="row2" style="margin-top:8px"><button class="btn sm" id="vxListen">▶ ฟังเสียงฉัน (VoxCPM2)</button><button class="btn alt sm" id="vxUse">ใช้เป็นเสียงพากย์</button></div></div>`;
   if (md) h += `<div class="item" style="display:block"><b>${GM.esc(md.label)}</b><br><small>ใช้อยู่${md.step ? ' · ขั้นที่ ' + md.step : ''}${md.score ? ` · ชัด ${Math.round((1 - md.score.cer) * 100)}% · เหมือนเสียงคุณ ${Math.round(md.score.sim * 100)}%` : ''} · ${new Date(md.t * 1000).toLocaleString('th-TH')}</small>
@@ -250,8 +250,8 @@ function renderTrain(){
   } else {
     if (tr?.state === 'error') h += `<p class="lim">${GM.esc(tr.msg || '')}</p>${tr.tail ? `<details><summary class="hint">รายละเอียด</summary><pre style="white-space:pre-wrap;font-size:11px">${GM.esc(tr.tail.join('\n'))}</pre></details>` : ''}`;
     else if (tr?.state === 'done' || tr?.state === 'stopped') h += `<p class="hint">${GM.esc(tr.msg || '')}</p>`;
-    const ok = good >= MIN_TRAIN;
-    h += `<p class="hint" style="margin-top:${md ? 10 : 0}px">${ok ? `ใช้ ${good} ประโยค (ไม่นับที่ Whisper ตีตก) · เทรนบน Mac ของคุณเอง ใช้เวลาหลายชั่วโมง` : `ต้องมีอย่างน้อย ${MIN_TRAIN} ประโยค (ตอนนี้ ${good}) — อัดต่อได้เลย`}</p>
+    const ok = good >= KT_MIN;
+    h += `<p class="hint" style="margin-top:${md ? 10 : 0}px">${ok ? `ใช้ ${good} ประโยค (ไม่นับที่ Whisper ตีตก) · เทรนบน Mac ของคุณเอง ใช้เวลาหลายชั่วโมง` : `ต้องมีอย่างน้อย ${KT_MIN} ประโยค (ตอนนี้ ${good}) — อัดต่อได้เลย`}</p>
       <div class="chips" id="vtSteps">${[[3000, 'ลองเร็ว 3,000 ขั้น'], [8000, 'มาตรฐาน 8,000'], [15000, 'ละเอียด 15,000']].map(([v, n]) => `<button class="chip ${v === (st.steps || 8000) ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
       <div class="row2" style="margin-top:10px"><button class="btn" id="vtStart" ${ok ? '' : 'disabled'}>🧠 เริ่มเทรน</button>${md ? '<button class="btn alt" id="vtResume">เทรนต่อจากเดิม</button>' : ''}</div>
       <p class="hint">แนะนำ: กด “ตรวจคุณภาพ” ก่อนเทรน · ยิ่งข้อมูลเยอะ/สะอาด เสียงยิ่งชัด · เทรนต่อเพิ่มได้ภายหลังเมื่ออัดเพิ่ม</p>`;
@@ -265,7 +265,28 @@ function renderTrain(){
   const weak = tr?.weak || [];
   if (weak.length) h += `<div class="item" style="display:block;margin-top:8px"><b>🎯 จุดที่ยังพูดไม่ชัด</b>${weak.map(w => `<div style="margin-top:6px;font-size:14px">${GM.esc(w.text)}<br><small style="color:#f99">AI ฟังได้: “${GM.esc(w.heard)}”</small></div>`).join('')}
       <button class="btn sm" id="vtWeak" style="width:100%;margin-top:8px">✨ แต่งประโยคฝึกจุดนี้ 30 ประโยค</button></div>`;
-  box.innerHTML = h;
+  // 🧠 VoxCPM2 LoRA (main)
+  const vt = status?.voxtrain, vl = status?.voxlora, vrun = vt && (vt.state === 'running' || vt.state === 'starting');
+  vx += `<div class="item" style="display:block;margin-bottom:10px"><b>🧠 เทรนเสียงฉันด้วย VoxCPM2 (LoRA)</b><br><small>ทำให้เสียงนิ่ง เหมือนคุณทุกประโยค และได้จังหวะการพูดแบบคุณ · ใช้ชุดข้อมูลที่อัดไว้ · ขั้นต่ำ ${MIN_TRAIN} ประโยค</small>`;
+  if (vl) vx += `<div style="margin-top:8px"><small>✅ มีโมเดลแล้ว · ขั้นที่ ${vl.step} · ${new Date(vl.t * 1000).toLocaleString('th-TH')}</small><div class="row2" style="margin-top:6px"><button class="btn sm" id="vlListen">▶ ฟังเสียงที่เทรนแล้ว</button><button class="btn alt sm" id="vlUse">ใช้เป็นเสียงพากย์</button></div></div>`;
+  if (vrun){
+    const pct = vt.total ? Math.min(100, (vt.step || 0) / vt.total * 100) : 0;
+    vx += `<div class="vt-prog" style="margin-top:10px"><div class="bar"><i style="width:${pct}%"></i></div></div><p class="hint">${GM.esc(vt.msg || '')}${vt.eta ? ' · เหลือประมาณ ' + fmtEta(vt.eta) : ''}${vt.loss ? ' · loss ' + vt.loss.toFixed(3) : ''}</p><button class="btn alt sm" id="vlStop">หยุดเทรน (เก็บผลล่าสุดไว้)</button>`;
+  } else {
+    if (vt?.state === 'error') vx += `<p class="lim">${GM.esc(vt.msg || '')}</p>${vt.tail ? `<details><summary class="hint">รายละเอียด (ส่งให้ผู้พัฒนา)</summary><pre style="white-space:pre-wrap;font-size:11px">${GM.esc(vt.tail.join('\n'))}</pre></details>` : ''}`;
+    else if (vt) vx += `<p class="hint">${GM.esc(vt.msg || '')}</p>`;
+    vx += `<button class="btn" id="vlStart" style="width:100%;margin-top:8px" ${good >= MIN_TRAIN ? '' : 'disabled'}>🧠 ${vl ? 'เทรนใหม่ด้วยข้อมูลล่าสุด' : 'เริ่มเทรน'} (${good} ประโยค)</button>${good < MIN_TRAIN ? `<p class="hint">อัดอีก ${MIN_TRAIN - good} ประโยค</p>` : '<p class="hint">ประมาณ 3 รอบของข้อมูล · เวลาขึ้นกับจำนวนประโยค · ระหว่างเทรนเสียง VoxCPM2 จะช้าลง</p>'}`;
+  }
+  vx += `</div>`;
+  box.innerHTML = vx + `<details style="margin-top:6px"><summary class="hint" style="cursor:pointer">ขั้นสูง: เทรน KhanomTan (แบบเดิม — ไม่แนะนำแล้ว)</summary>${h}</details>`;
+  box.querySelector('#vlStart')?.addEventListener('click', async () => { try { await GM.MAC.form('/api/ds/' + DS + '/voxtrain', {steps: 0}); GM.toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); await render(); } catch(e){ GM.toast(e.message, true); } });
+  box.querySelector('#vlStop')?.addEventListener('click', async () => { if (!confirm('หยุดเทรน? ผลล่าสุดจะถูกเก็บไว้ใช้')) return; await GM.MAC.call('/api/ds/' + DS + '/voxtrain/stop', {method: 'POST'}); setTimeout(render, 3000); });
+  box.querySelector('#vlListen')?.addEventListener('click', async e => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'กำลังสร้างเสียง…';
+    try { const blob = await GM.MAC.tts($('#vxTry')?.value.trim() || 'สวัสดีครับ', 'vox:lora:' + DS); new Audio(URL.createObjectURL(blob)).play(); } catch(err){ GM.toast(err.message, true); }
+    b.disabled = false; b.textContent = '▶ ฟังเสียงที่เทรนแล้ว';
+  });
+  box.querySelector('#vlUse')?.addEventListener('click', async () => { await GM.MAC.refresh(); GM.S.voice = {type: 'mac', id: 'vox:lora:' + DS}; GM.save(); try { GM.renderVoice(); } catch(e){} GM.toast('ตั้งเป็นเสียงพากย์แล้ว'); });
   box.querySelector('#vxListen')?.addEventListener('click', async e => {
     const b = e.currentTarget; b.disabled = true; b.textContent = 'กำลังสร้างเสียง… (ครั้งแรกนานหน่อย)';
     try { const blob = await GM.MAC.tts($('#vxTry').value.trim() || 'สวัสดีครับ', 'vox:ds:' + DS); new Audio(URL.createObjectURL(blob)).play(); }
@@ -301,7 +322,7 @@ function renderTrain(){
   });
   box.querySelector('#vtUse')?.addEventListener('click', async () => { await GM.MAC.refresh(); GM.S.voice = {type: 'mac', id: 'my:' + DS}; GM.save(); try { GM.renderVoice(); } catch(e){} GM.toast('ตั้งเป็นเสียงพากย์แล้ว'); });
   clearTimeout(pollT);
-  if (running) pollT = setTimeout(() => { if (document.querySelector('.page.on[data-page="voicetrain"]')) render(); }, 8000);
+  if (running || vrun) pollT = setTimeout(() => { if (document.querySelector('.page.on[data-page="voicetrain"]')) render(); }, 8000);
 }
 
 window.addEventListener('gm:page', e => { if (e.detail === 'voicetrain') render(); });

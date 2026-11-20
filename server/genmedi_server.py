@@ -16,6 +16,7 @@ this Mac from anywhere; every remote call needs the pairing token.
 import asyncio
 import io
 import json
+import signal
 import math
 import os
 import platform
@@ -466,8 +467,8 @@ MLXGEN_MODEL = "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit"
 VENV_IMG = DATA / "venv-img"       # latest mflux (Z-Image, FLUX.2 Klein) — kept apart from the pinned mflux 0.6.2 of FLUX.1
 VENV_TOOLS = DATA / "venv-tools"
 VENV_VOX = DATA / "venv-vox"       # VoxCPM2 (Apache-2.0, 30 languages incl. Thai) — own torch stack, apart from coqui   # separate env for MLX tools so their MLX version can't clash with mflux
-TOOL_PKGS = {"vox": ["voxcpm", "soundfile"], "img": ["mflux>=0.24,<0.30"], "mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
-TOOL_NAMES = {"vox": "เสียงพากย์ VoxCPM2", "img": "ตัวสร้างภาพรุ่นใหม่ (mflux)", "mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
+TOOL_PKGS = {"vox": ["voxcpm", "soundfile"], "voxtrain": ["pyyaml", "tensorboard", "argbind", "librosa"], "img": ["mflux>=0.24,<0.30"], "mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
+TOOL_NAMES = {"vox": "เสียงพากย์ VoxCPM2", "voxtrain": "ตัวเทรน VoxCPM2", "img": "ตัวสร้างภาพรุ่นใหม่ (mflux)", "mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
 JOBS = {}
 QUEUE = []
 QCOND = threading.Condition()
@@ -483,7 +484,7 @@ def ensure_tool(tool, j=None):
 
 def _ensure_tool(tool, j=None):
     """Install an optional tool into venv-tools on first use (no Terminal needed)."""
-    venv_dir = {"img": VENV_IMG, "vox": VENV_VOX}.get(tool, VENV_TOOLS)
+    venv_dir = {"img": VENV_IMG, "vox": VENV_VOX, "voxtrain": VENV_VOX}.get(tool, VENV_TOOLS)
     py = venv_dir / "bin" / "python"
     mark = venv_dir / f".ok-{tool}"
     if mark.exists() and py.exists():
@@ -899,7 +900,7 @@ async def tts(req: Request):
         t0 = time.time()
         import numpy as np
         if speaker.startswith("vox:"):         # VoxCPM2: clear Thai, cloned from a reference clip
-            return vox_tts(text, speaker[4:])
+            return vox_tts(text, speaker[4:], j.get("style"))
         if speaker.startswith("my:"):          # the user's own trained Thai voice
             s, sp = get_my(speaker[3:])
         else:
@@ -954,7 +955,31 @@ except Exception as e:
     model = load("cpu")
 print(json.dumps({"ready": True, "device": dev, "sr": model.tts_model.sample_rate}), flush=True)
 
+cur_lora = None
+
+def use_lora(path):
+    global model, cur_lora
+    if path == cur_lora:
+        return
+    if path:
+        try:
+            model.load_lora(path)
+            model.set_lora_enabled(True)
+        except Exception as e:
+            print("load_lora failed, reloading with LoRA:", e, file=sys.stderr, flush=True)
+            try:
+                model = VoxCPM.from_pretrained(sys.argv[1], load_denoiser=False, lora_weights_path=path, device=dev)
+            except TypeError:
+                model = VoxCPM.from_pretrained(sys.argv[1], load_denoiser=False, lora_weights_path=path)
+    else:
+        try:
+            model.set_lora_enabled(False)
+        except Exception:
+            pass
+    cur_lora = path
+
 def gen(req):
+    use_lora(req.get("lora"))
     kw = dict(text=req["text"], cfg_value=req.get("cfg", 2.0), inference_timesteps=req.get("steps", 10), normalize=False, denoise=False)
     if req.get("prompt_wav"):
         kw["prompt_wav_path"] = req["prompt_wav"]
@@ -983,7 +1008,7 @@ for line in sys.stdin:
                 raise
             # some ops misbehave on Apple GPU (NaN → silence) — redo on CPU and stay there
             print("mps generate failed, switching to cpu:", e, file=sys.stderr, flush=True)
-            dev = "cpu"; model = load("cpu"); wav = gen(req)
+            dev = "cpu"; model = load("cpu"); cur_lora = None; wav = gen(req)
         w = np.nan_to_num(np.asarray(wav, dtype=np.float32).reshape(-1))
         if bad(w):
             raise RuntimeError("VoxCPM2 สร้างเสียงเงียบ — ลองข้อความสั้นลงหรือเสียงอื่น")
@@ -1093,16 +1118,43 @@ def vox_ref(key):
     raise HTTPException(404, "ไม่รู้จักเสียงนี้")
 
 
-def vox_tts(text, key):
+VOX_STYLES = {
+    "excited": "excited, energetic, upbeat",
+    "calm": "calm, soft and gentle, relaxed pace",
+    "ghost": "whispering, mysterious and suspenseful, slow, like telling a ghost story at night",
+    "sales": "enthusiastic salesperson, persuasive, upbeat and friendly",
+    "news": "formal news anchor, clear, neutral and confident",
+    "sad": "sad, emotional, slow",
+    "funny": "playful and humorous, cheerful",
+    "story": "warm storyteller, expressive, natural pauses",
+}
+
+
+def vox_tts(text, key, style=None):
     t0 = time.time()
-    ref, rtxt = vox_ref(key)
-    data = VOX.generate(text=text, prompt_wav=ref, prompt_text=rtxt, cfg=2.0, steps=10)
+    lora = None
+    if key.startswith("lora:"):          # VoxCPM2 + the user's own LoRA (trained on their recorded dataset)
+        name = Path(key[5:]).name
+        lp = VOX_LORAS / name
+        if not (lp / "lora_weights.safetensors").exists() and not (lp / "lora_weights.ckpt").exists():
+            raise HTTPException(404, "ยังไม่มี LoRA เสียงนี้ — เทรนในหน้า 🎓 ก่อน")
+        lora = str(lp)
+        ref, rtxt = None, None
+    else:
+        ref, rtxt = vox_ref(key)
+    st = VOX_STYLES.get(style or "")
+    data = VOX.generate(text=(f"({st})" if st else "") + text, prompt_wav=ref, prompt_text=rtxt, cfg=2.0, steps=10, lora=lora)
     STATS["vox_ms_per_char"] = round((time.time() - t0) * 1000 / max(1, len(text)), 1)
     return data
 
 
+VOX_LORAS = DATA / "vox-loras"
+
+
 def vox_speakers():
-    out = [{"id": "vox:" + k, "name": v[0] + " · VoxCPM2", "gender": v[1], "engine": "vox"} for k, v in VOX_DESIGNS.items()]
+    out = [{"id": "vox:lora:" + d.name, "name": "🎓 เสียงฉัน (เทรนแล้ว) · VoxCPM2", "gender": None, "engine": "vox", "mine": True, "lora": True}
+           for d in sorted(VOX_LORAS.glob("*")) if (d / "lora_config.json").exists()] if VOX_LORAS.exists() else []
+    out += [{"id": "vox:" + k, "name": v[0] + " · VoxCPM2", "gender": v[1], "engine": "vox"} for k, v in VOX_DESIGNS.items()]
     if DS_ROOT.exists():
         for mf in DS_ROOT.glob("*/meta.json"):
             try:
@@ -1934,6 +1986,8 @@ def ds_status(name: str):
     return {"name": d.name, "count": len(m), "minutes": round(tot / 60, 1), "items": m,
             "checked": sum(1 for v in m.values() if v.get("qc")), "bad": sum(1 for v in m.values() if v.get("qc") and not v["qc"].get("ok")),
             "train": {k: v for k, v in (TRAIN.get(d.name) or {}).items() if k != "proc"} or None, "settings": ds_settings(d),
+            "voxtrain": {k: v for k, v in (VOXTRAIN.get(d.name) or {}).items() if k != "proc"} or None,
+            "voxlora": json.loads((VOX_LORAS / d.name / "meta.json").read_text()) if (VOX_LORAS / d.name / "meta.json").exists() else None,
             "model": (json.loads((MY_MODELS / d.name / "meta.json").read_text()) if (MY_MODELS / d.name / "meta.json").exists() else None)}
 
 
@@ -2137,19 +2191,18 @@ def auto_train_loop():
             for sf_ in DS_ROOT.glob("*/settings.json") if DS_ROOT.exists() else []:
                 d = sf_.parent
                 st = ds_settings(d)
-                if st["auto"] == "off" or (TRAIN.get(d.name) or {}).get("state") in ("running", "starting"):
+                if st["auto"] == "off" or (VOXTRAIN.get(d.name) or {}).get("state") in ("running", "starting"):
                     continue
                 if st["auto"] == "night" and not (0 <= datetime.now().hour < 6):
                     continue
                 if any(x["state"] in ("queued", "running") for x in JOBS.values()):
                     continue   # don't fight the user's own work for the GPU
                 good = ds_good_count(d)
-                done = json.loads((d / "trained.json").read_text()).get("clips", 0) if (d / "trained.json").exists() else 0
-                has = (MY_MODELS / d.name / "model.pth").exists()
-                if (not has and good >= 300) or (has and good - done >= 100):
-                    print(f"[auto-train] {d.name}: {good} clips (last {done})", flush=True)
-                    TRAIN[d.name] = {"state": "starting", "msg": "เริ่มเทรนอัตโนมัติ…", "step": 0, "total": 8000, "resume": has, "auto": True}
-                    threading.Thread(target=lambda n=d.name: _safe(train_worker, n, 8000 if not has else 3000, "mps" if torch_device() == "mps" else "cpu"), daemon=True).start()
+                done = json.loads((d / "trained-vox.json").read_text()).get("clips", 0) if (d / "trained-vox.json").exists() else 0
+                has = (VOX_LORAS / d.name / "lora_config.json").exists()
+                if (not has and good >= 100) or (has and good - done >= 100):
+                    print(f"[auto-train] VoxCPM2 LoRA {d.name}: {good} clips (last {done})", flush=True)
+                    start_vox_train(d.name, auto=True)
         except Exception as e:  # noqa
             print("[auto-train]", e, flush=True)
 
@@ -2207,6 +2260,166 @@ async def restore(file: UploadFile = File(...)):
         tmp.unlink(missing_ok=True)
     _my.clear()
     return {"restored": n}
+
+
+# ---------------- VoxCPM2 LoRA on the user's recorded dataset (official train_voxcpm_finetune.py) ----------------
+VOXTRAIN = {}
+
+
+def voxcpm_src():
+    """The official VoxCPM repo (training script + configs), fetched once."""
+    import zipfile
+    src = DATA / "voxcpm-src"
+    if (src / "scripts" / "train_voxcpm_finetune.py").exists():
+        return src
+    zp = DATA / "voxcpm-src.zip"
+    subprocess.run(["curl", "-fsSL", "--max-time", "300", "-o", str(zp), "https://codeload.github.com/OpenBMB/VoxCPM/zip/refs/heads/main"], check=True)
+    tmp = DATA / "voxcpm-src.tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    with zipfile.ZipFile(zp) as z:
+        for n in z.namelist():
+            rel = n.split("/", 1)[1] if "/" in n else ""
+            if rel and not n.endswith("/"):
+                (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
+                (tmp / rel).write_bytes(z.read(n))
+    zp.unlink(missing_ok=True)
+    shutil.rmtree(src, ignore_errors=True)
+    tmp.rename(src)
+    return src
+
+
+def vox_train_worker(name, steps=None):
+    import numpy as np
+    import librosa
+    import soundfile as sf
+    d = ds_dir(name)
+    t = VOXTRAIN[d.name]
+    work = DATA / "training-vox" / d.name
+    (work / "wav16").mkdir(parents=True, exist_ok=True)
+    t.update(state="running", msg="เตรียมข้อมูลเสียง (16kHz)…", started=time.time(), step=0)
+    m = ds_meta(d)
+    items = [(k, v) for k, v in m.items() if not (v.get("qc") and not v["qc"].get("ok")) and 1.0 <= v.get("dur", 0) <= 20 and (d / "wavs" / f"{k}.wav").exists()]
+    if len(items) < 20:
+        raise RuntimeError(f"ข้อมูลน้อยเกินไป ({len(items)} ประโยค)")
+    rows = []
+    for k, v in items:
+        f16 = work / "wav16" / f"{k}.wav"
+        if not f16.exists():
+            y, _ = librosa.load(str(d / "wavs" / f"{k}.wav"), sr=16000)
+            sf.write(f16, y, 16000, subtype="PCM_16")
+        rows.append({"audio": str(f16), "text": v["text"], "duration": v.get("dur")})
+    random.seed(7)
+    random.shuffle(rows)
+    val, train = rows[:min(8, len(rows) // 20 + 1)], rows[min(8, len(rows) // 20 + 1):]
+    for r in train:   # ~40% with a reference clip of the same voice keeps cloning-with-reference working (official advice: 30–50%)
+        if random.random() < 0.4:
+            r["ref_audio"] = random.choice(train)["audio"]
+    (work / "train.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in train))
+    (work / "val.jsonl").write_text("\n".join(json.dumps(r, ensure_ascii=False) for r in val))
+    bs = 4 if (RAM_GB or 16) >= 24 else 2
+    total = int(steps or max(300, min(3000, math.ceil(3 * len(train) / bs))))   # ~3 epochs (docs: 1–3 epochs for one speaker)
+    t.update(msg="ดาวน์โหลดตัวเทรนและโมเดล…", total=total)
+    py = ensure_tool("vox")
+    ensure_tool("voxtrain")
+    src = voxcpm_src()
+    base = ensure_model("vox")
+    save = work / "ckpt"
+    cfg = {"pretrained_path": base, "train_manifest": str(work / "train.jsonl"), "val_manifest": str(work / "val.jsonl"),
+           "sample_rate": 16000, "out_sample_rate": 48000, "batch_size": bs, "grad_accum_steps": 4 // bs, "num_workers": 0,
+           "preprocessing_num_workers": 2, "num_iters": total, "max_steps": total, "log_interval": 10, "valid_interval": max(100, total // 5),
+           "save_interval": max(100, total // 5), "learning_rate": 1e-4, "weight_decay": 0.01, "warmup_steps": min(100, total // 10),
+           "max_batch_tokens": 8192, "save_path": str(save), "tensorboard": str(work / "tb"),
+           "lambdas": {"loss/diff": 1.0, "loss/stop": 1.0},
+           "lora": {"enable_lm": True, "enable_dit": True, "enable_proj": False, "r": 32, "alpha": 32, "dropout": 0.0}}
+    (work / "lora.yaml").write_text(json.dumps(cfg, ensure_ascii=False, indent=1))   # JSON is valid YAML
+    if VOX.p and VOX.p.poll() is None:   # free the GPU/RAM used by the speaking worker
+        VOX.p.terminate()
+        VOX.p = None
+    env = dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK="1", HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1",
+               PYTHONPATH=str(src / "src") + os.pathsep + str(src))
+    log = open(work / "train.log", "a", encoding="utf8")
+    p = subprocess.Popen([str(py), str(src / "scripts" / "train_voxcpm_finetune.py"), "--config_path", str(work / "lora.yaml")],
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, cwd=str(src))
+    t.update(proc=p, msg="กำลังเทรน…", started=time.time())
+    try:
+        subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa
+        pass
+    tail = []
+    for line in p.stdout:
+        log.write(line)
+        tail = (tail + [line.rstrip()])[-40:]
+        mm = re.search(r"[Ss]tep\D{0,4}(\d+)", line) or re.search(r"(\d+)\s*/\s*" + str(total) + r"\b", line)
+        if mm and int(mm.group(1)) <= total:
+            t["step"] = int(mm.group(1))
+            el = time.time() - t["started"]
+            if t["step"] > 5:
+                t["eta"] = round(el / t["step"] * (total - t["step"]))
+            t["msg"] = f"กำลังเทรน ขั้นที่ {t['step']}/{total}"
+        ml = re.search(r"loss[^\d-]{0,12}([\d.]+)", line)
+        if ml:
+            try:
+                t["loss"] = float(ml.group(1))
+            except ValueError:
+                pass
+    p.wait()
+    log.close()
+    t.pop("proc", None)
+    t["tail"] = tail[-12:]
+    ok = vox_export(d.name)
+    if ok and (p.returncode == 0 or t.get("stop")):
+        (d / "trained-vox.json").write_text(json.dumps({"clips": len(items), "t": int(time.time())}))
+        t.update(state="done" if not t.get("stop") else "stopped", msg="เทรนเสร็จแล้ว 🎉 เลือก “🎓 เสียงฉัน (เทรนแล้ว)” ได้เลย" if not t.get("stop") else "หยุดแล้ว — ใช้ checkpoint ล่าสุด")
+    else:
+        t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
+
+
+def vox_export(name):
+    d = ds_dir(name)
+    save = DATA / "training-vox" / d.name / "ckpt"
+    cands = [p for p in save.glob("step_*") if (p / "lora_config.json").exists()] if save.exists() else []
+    if not cands:
+        return False
+    best = max(cands, key=lambda p: p.name)
+    out = VOX_LORAS / d.name
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    for f in best.iterdir():
+        if f.name.startswith("lora_"):
+            shutil.copy(f, out / f.name)
+    (out / "meta.json").write_text(json.dumps({"step": int(best.name.split("_")[-1]), "t": int(time.time())}))
+    return True
+
+
+def start_vox_train(name, steps=None, auto=False):
+    d = ds_dir(name)
+    if (VOXTRAIN.get(d.name) or {}).get("state") in ("running", "starting"):
+        raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
+    VOXTRAIN[d.name] = {"state": "starting", "msg": "กำลังเริ่ม…", "step": 0, "auto": auto}
+
+    def run():
+        try:
+            vox_train_worker(d.name, steps)
+        except Exception as e:  # noqa
+            VOXTRAIN[d.name].update(state="error", msg="เทรนไม่สำเร็จ: " + str(e)[:300])
+            print("[voxtrain]", repr(e), flush=True)
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.post("/api/ds/{name}/voxtrain")
+def ds_voxtrain(name: str, steps: int = Form(0)):
+    model_guard("vox")
+    start_vox_train(name, steps or None)
+    return {"ok": True}
+
+
+@app.post("/api/ds/{name}/voxtrain/stop")
+def ds_voxtrain_stop(name: str):
+    t = VOXTRAIN.get(ds_dir(name).name) or {}
+    if t.get("proc"):
+        t["stop"] = True
+        t["proc"].send_signal(signal.SIGINT)   # the trainer saves a checkpoint on SIGINT/SIGTERM
+    return {"ok": True}
 
 
 TRAIN = {}

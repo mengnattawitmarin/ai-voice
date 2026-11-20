@@ -399,12 +399,18 @@ const MAC = {
     if (!this.on){ this.state = 'off'; renderQuota(); return null; }
     try { this.info = await (await this.call('/api/info', {}, 15000)).json(); LS.set('macInfo', this.info); }
     catch(e){ return null; }
+    // once: move users from KhanomTan (European accent) to VoxCPM2 (clear Thai)
+    if (!S.voxDefault && (this.info.speakers || []).some(s => s.engine === 'vox')){
+      const cur = S.voice, kt = !cur || (cur.type === 'mac' && !/^(vox|my):/.test(cur.id || '')) || cur.type === 'device';
+      if (kt){ const sp = this.info.speakers.find(s => s.engine === 'vox' && s.mine) || this.info.speakers.find(s => s.id === 'vox:f1') || this.info.speakers.find(s => s.engine === 'vox'); S.voice = {type: 'mac', id: sp.id}; toast('เปลี่ยนเสียงเริ่มต้นเป็น ' + sp.name + ' — ไทยชัดกว่า'); }
+      S.voxDefault = true; save();
+    }
     renderQuota(); try { renderVoice(); renderEst(); renderMacBar(); renderLoraChips(); } catch(e){}
     return this.info;
   },
   json(path, body, ms){ return this.call(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body || {})}, ms); },
   form(path, fields, ms){ const fd = new FormData(); for (const [k, v] of Object.entries(fields)){ if (v == null) continue; if (v instanceof Blob) fd.append(k, v, v.name || 'file.' + extOf(v.type)); else fd.append(k, String(v)); } return this.call(path, {method:'POST', body: fd}, ms); },
-  async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
+  async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, style: String(speaker || '').startsWith('vox:') && S.voxStyle ? S.voxStyle : undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
   async editImage(file, prompt, seed){ const t0 = performance.now(); const r = await this.form('/api/img_edit', {image: file, prompt, seed}); const blob = await r.blob(); SPEED.learn('img-mac2-edit', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined, lora: S.imgLora || undefined}); const blob = await r.blob(); SPEED.learn('img-mac2-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   speakers(){
@@ -431,8 +437,17 @@ function curVoice(){
   return {type:'device', id:d.voiceURI, obj:d, name:prettyDev(d), desc:'เสียงในเครื่อง · ฟรี ใช้ออฟไลน์ได้'};
 }
 function prettyDev(d){ return d.name.replace(/\s*\((?:Thai|Thailand)[^)]*\)/i,'').replace(/Microsoft |Google /,'') + ` (${d.lang})`; }
+const VOX_STYLE = [['', 'ปกติ'], ['excited', '🤩 ตื่นเต้น'], ['calm', '😌 สงบ'], ['story', '📖 เล่าเรื่อง'], ['ghost', '👻 เรื่องผี'], ['sales', '🛍️ ขายของ'], ['news', '📰 ข่าว'], ['funny', '😆 ตลก'], ['sad', '😢 เศร้า']];
+function renderVoxStyle(){
+  const box = $('#voxStyle'); if (!box) return;
+  const v = curVoice(), on = (v.type === 'mac' && String(v.id).startsWith('vox:')) || (v.type === 'clone' && S.cloneEngine !== 'openvoice');
+  box.hidden = !on; if (!on) return;
+  box.innerHTML = `<label class="lbl2" style="margin:10px 0 6px">อารมณ์เสียง (VoxCPM2)</label><div class="chips">${VOX_STYLE.map(([k, n]) => `<button class="chip ${k === (S.voxStyle || '') ? 'on' : ''}" data-v="${k}">${n}</button>`).join('')}</div>`;
+  box.querySelectorAll('.chip').forEach(b => b.onclick = () => { S.voxStyle = b.dataset.v; save(); stopAll(); renderVoxStyle(); });
+}
 function renderVoice(){
   const v = curVoice(); $('#vName').textContent = v.name; $('#vDesc').textContent = v.desc;
+  try { renderVoxStyle(); } catch(e){}
   $('#fLangV').textContent = lang()[1];
   $('#fToneV').textContent = window.VFX ? VFX.label(S.fx) : 'ปกติ';
   $('#fStyleV').textContent = (STYLES[S.style]||STYLES.natural).n;
@@ -446,7 +461,9 @@ $('#btnVoice').onclick = () => {
   let h = sheetHead('เลือกเสียง');
   h += `<label class="switch" style="margin:0 0 6px"><span>💼 โหมดเชิงพาณิชย์ (ทำวิดีโอหารายได้)<br><small style="color:var(--mut)">ดาวน์โหลด/แชร์/บันทึกได้เฉพาะเสียงที่สัญญาอนุญาตเชิงพาณิชย์</small></span><input type="checkbox" id="vComm" ${S.commercial ? 'checked' : ''}></label>`;
   h += `<h4>💼 เสียงพากย์บน Mac ${MAC.on ? (MAC.state === 'on' ? '<span class="tag ok">เชื่อมแล้ว</span>' : '<span class="tag warn">Mac ออฟไลน์?</span>') : ''}</h4>`;
-  h += MAC.on ? MAC.speakers().map(s => row('mac:' + s.id, esc(s.name) + ' ' + licTag('mac'), s.engine === 'vox' ? '⭐ แนะนำ — ไทยชัด เสียงธรรมชาติ · ครั้งแรกโหลดโมเดล ~5GB' : s.mine ? 'โมเดลที่คุณเทรนเอง' : 'KhanomTan · สำเนียงยุโรป อาจฟังยาก', v.type === 'mac' && v.id === s.id)).join('')
+  const spkRow = s => row('mac:' + s.id, esc(s.name) + ' ' + licTag('mac'), s.engine === 'vox' ? (s.lora ? '⭐ โมเดลเสียงคุณที่เทรนแล้ว — นิ่งที่สุด' : '⭐ แนะนำ — ไทยชัด เสียงธรรมชาติ') : s.mine ? 'โมเดลที่คุณเทรนเอง (KhanomTan)' : 'KhanomTan · สำเนียงยุโรป อาจฟังยาก', v.type === 'mac' && v.id === s.id);
+  const vxs = MAC.speakers().filter(s => s.engine === 'vox'), kts = MAC.speakers().filter(s => s.engine !== 'vox');
+  h += MAC.on ? vxs.map(spkRow).join('') + (kts.length ? `<details ${kts.some(s => v.type === 'mac' && v.id === s.id) ? 'open' : ''}><summary class="hint" style="cursor:pointer;margin:6px 0">เสียงสำรอง (KhanomTan · สำเนียงยุโรป)</summary>${kts.map(spkRow).join('')}</details>` : '')
     : `<button class="opt" data-mac><span class="dot"></span><span class="t"><b>＋ เชื่อมต่อ Mac</b><small>เปิดแอป Gen Medi บน Mac แล้วสแกน QR — ได้เสียงพากย์ที่ใช้หารายได้ได้ + สร้างภาพ</small></span></button>`;
   h += `<h4>💼 เสียงของฉัน (โคลนจากเสียงตัวเอง)</h4>`;
   h += clones.map(c => row('clone:' + c.id, esc(c.name) + ' ' + licTag('clone'), 'VoxCPM2 โคลนเสียงคุณบน Mac · ไทยชัด', v.type === 'clone' && v.id === c.id)).join('');
@@ -757,7 +774,7 @@ function ui(){
   try { renderEst(); } catch(e){}
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st === 'playing' ? 'playing' : st === 'paused' ? 'paused' : 'none';
 }
-const pkey = (v, text) => v.type + ':' + v.id + '|' + (v.type === 'device' ? '' : (window.VFX?.sig(S.fx) || '')) + '|' + text;
+const pkey = (v, text) => v.type + ':' + v.id + '|' + (S.voxStyle || '') + '|' + (v.type === 'device' ? '' : (window.VFX?.sig(S.fx) || '')) + '|' + text;
 function prepare(v, text){
   const key = pkey(v, text);
   if (P.key !== key){
