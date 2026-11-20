@@ -139,6 +139,7 @@ MODELS = {
     "voice": {"name": "โคลนเสียง OpenVoice V2", "repo": "myshell-ai/OpenVoiceV2", "allow": ["converter/*"], "state": "idle", "pct": 0},
     "flux": {"name": "ภาพ FLUX.1-schnell (4-bit)", "repo": FLUX_REPO, "allow": None, "state": "idle", "pct": 0},
     "video": {"name": "วิดีโอ Wan2.1 T2V 1.3B", "repo": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", "allow": None, "state": "idle", "pct": 0},
+    "vox": {"name": "เสียงพากย์ VoxCPM2 (ไทยชัด)", "repo": "openbmb/VoxCPM2", "allow": None, "state": "idle", "pct": 0},
     "zimage": {"name": "ภาพ Z-Image Turbo (4-bit)", "repo": ZIMAGE_REPO, "allow": None, "state": "idle", "pct": 0},
     "klein": {"name": "แก้ภาพ FLUX.2 Klein 4B (4-bit)", "repo": KLEIN_REPO, "allow": None, "state": "idle", "pct": 0},
     "vega": {"name": "ภาพ Segmind-Vega (ประหยัด)", "repo": VEGA_REPO, "allow": ["*.json", "*fp16*.safetensors", "tokenizer*/*", "*.txt"], "state": "idle", "pct": 0},
@@ -463,9 +464,10 @@ VIDEO_MODES = {   # Wan needs 4k+1 frames
 }
 MLXGEN_MODEL = "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit"
 VENV_IMG = DATA / "venv-img"       # latest mflux (Z-Image, FLUX.2 Klein) — kept apart from the pinned mflux 0.6.2 of FLUX.1
-VENV_TOOLS = DATA / "venv-tools"   # separate env for MLX tools so their MLX version can't clash with mflux
-TOOL_PKGS = {"img": ["mflux>=0.24,<0.30"], "mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
-TOOL_NAMES = {"img": "ตัวสร้างภาพรุ่นใหม่ (mflux)", "mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
+VENV_TOOLS = DATA / "venv-tools"
+VENV_VOX = DATA / "venv-vox"       # VoxCPM2 (Apache-2.0, 30 languages incl. Thai) — own torch stack, apart from coqui   # separate env for MLX tools so their MLX version can't clash with mflux
+TOOL_PKGS = {"vox": ["voxcpm", "soundfile"], "img": ["mflux>=0.24,<0.30"], "mlxgen": ["mlx-gen"], "llm": ["mlx-lm"], "whisper": ["mlx-whisper"], "rmbg": ["rembg[cpu]", "pillow"]}
+TOOL_NAMES = {"vox": "เสียงพากย์ VoxCPM2", "img": "ตัวสร้างภาพรุ่นใหม่ (mflux)", "mlxgen": "ตัวสร้างวิดีโอ HD", "llm": "ผู้ช่วยเขียนบท", "whisper": "ตัวถอดเสียง", "rmbg": "ตัวลบพื้นหลัง"}
 JOBS = {}
 QUEUE = []
 QCOND = threading.Condition()
@@ -481,7 +483,7 @@ def ensure_tool(tool, j=None):
 
 def _ensure_tool(tool, j=None):
     """Install an optional tool into venv-tools on first use (no Terminal needed)."""
-    venv_dir = VENV_IMG if tool == "img" else VENV_TOOLS
+    venv_dir = {"img": VENV_IMG, "vox": VENV_VOX}.get(tool, VENV_TOOLS)
     py = venv_dir / "bin" / "python"
     mark = venv_dir / f".ok-{tool}"
     if mark.exists() and py.exists():
@@ -847,8 +849,8 @@ def info(req: Request):
         "models": {k: {kk: v.get(kk) for kk in ("name", "state", "pct", "mb", "total", "error")} for k, v in MODELS.items()},
         "loras": lora_list(), "tunnel": TUNNEL["url"], "tunnel_state": TUNNEL["state"], "local": local_request(req),
         "pair": pair_link() if local_request(req) else None,
-        "speakers": my_speakers() + (kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()]),
-        "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_kt_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
+        "speakers": vox_speakers() + my_speakers() + (kt_speakers() if MODELS["tts"]["state"] == "ready" else [{"id": k, "name": v[0], "gender": v[1]} for k, v in KT_SPEAKERS.items()]),
+        "voices": [p.stem for p in VOICES.glob("*.wav") if not p.stem.startswith("_")], "video_modes": {k: v["name"] for k, v in VIDEO_MODES.items()},
         "video_ok": (RAM_GB or 16) >= 16, **STATS,
     }
 
@@ -889,13 +891,15 @@ async def tts(req: Request):
     text = (j.get("text") or "").strip()
     if not text:
         raise HTTPException(400, "missing text")
-    model_guard("tts")
     speaker = j.get("speaker") or "Linda"
+    model_guard("vox" if speaker.startswith("vox:") else "tts")
     lang = j.get("lang") or "th-th"
 
     def run():
         t0 = time.time()
         import numpy as np
+        if speaker.startswith("vox:"):         # VoxCPM2: clear Thai, cloned from a reference clip
+            return vox_tts(text, speaker[4:])
         if speaker.startswith("my:"):          # the user's own trained Thai voice
             s, sp = get_my(speaker[3:])
         else:
@@ -920,6 +924,181 @@ async def tts(req: Request):
         model_guard("voice")
         data = await run_in_threadpool(busy, convert_bytes, data, str(VOICES / f"{voice}.wav"), float(j.get("tau") or 0.3))
     return Response(data, media_type="audio/wav")
+
+
+# ---------------- VoxCPM2 (OpenBMB, Apache-2.0): modern multilingual TTS with Thai, cloning from a reference clip ----------------
+VOX_CODE = r"""
+import sys, json, os, traceback
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+import torch, soundfile as sf
+from voxcpm import VoxCPM
+path = sys.argv[1]
+
+def load(d):
+    try:
+        m = VoxCPM.from_pretrained(path, load_denoiser=False, device=d)
+    except TypeError:
+        m = VoxCPM.from_pretrained(path, load_denoiser=False)
+        try:
+            m.tts_model.to(d)
+        except Exception:
+            pass
+    return m
+
+dev = "mps" if torch.backends.mps.is_available() else "cpu"
+try:
+    model = load(dev)
+except Exception as e:
+    print("mps load failed:", e, file=sys.stderr, flush=True)
+    dev = "cpu"
+    model = load("cpu")
+print(json.dumps({"ready": True, "device": dev, "sr": model.tts_model.sample_rate}), flush=True)
+
+def gen(req):
+    kw = dict(text=req["text"], cfg_value=req.get("cfg", 2.0), inference_timesteps=req.get("steps", 10), normalize=False, denoise=False)
+    if req.get("prompt_wav"):
+        kw["prompt_wav_path"] = req["prompt_wav"]
+        kw["prompt_text"] = req.get("prompt_text")
+    try:
+        return model.generate(**kw)
+    except TypeError:
+        kw.pop("denoise", None); kw.pop("normalize", None)
+        return model.generate(**kw)
+
+for line in sys.stdin:
+    req = json.loads(line)
+    try:
+        try:
+            wav = gen(req)
+        except Exception as e:
+            if dev != "mps":
+                raise
+            print("mps generate failed, switching to cpu:", e, file=sys.stderr, flush=True)
+            dev = "cpu"; model = load("cpu"); wav = gen(req)
+        sf.write(req["out"], wav, model.tts_model.sample_rate)
+        print(json.dumps({"ok": True, "device": dev}), flush=True)
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": (type(e).__name__ + ": " + str(e))[:400], "trace": traceback.format_exc()[-1200:]}), flush=True)
+"""
+
+
+class VoxWorker:
+    """Keeps one VoxCPM2 process alive (the 2B model takes a while to load); unloads after 20 idle minutes."""
+    def __init__(self):
+        self.p, self.lock, self.last, self.device = None, threading.Lock(), 0, None
+        threading.Thread(target=self._idle, daemon=True).start()
+
+    def _read(self, timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            line = self.p.stdout.readline()
+            if not line:
+                raise RuntimeError("VoxCPM2 หยุดทำงาน — ดูรายละเอียดใน " + str(DATA / "logs" / "voxcpm.log"))
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except Exception:  # noqa
+                    pass
+        raise RuntimeError("VoxCPM2 ตอบช้าเกินไป")
+
+    def _start(self):
+        py = ensure_tool("vox")
+        path = ensure_model("vox")
+        script = DATA / "voxcpm_worker.py"
+        script.write_text(VOX_CODE)
+        (DATA / "logs").mkdir(exist_ok=True)
+        err = open(DATA / "logs" / "voxcpm.log", "a")
+        env = dict(os.environ, PYTORCH_ENABLE_MPS_FALLBACK="1", HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1")
+        self.p = subprocess.Popen([str(py), str(script), path], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, text=True, env=env)
+        r = self._read(900)
+        self.device = r.get("device")
+        print(f"[vox] ready on {self.device}", flush=True)
+
+    def generate(self, **req):
+        with self.lock:
+            if not self.p or self.p.poll() is not None:
+                self._start()
+            out = Path(tempfile.mkdtemp(prefix="gm-vox-")) / "out.wav"
+            req["out"] = str(out)
+            self.p.stdin.write(json.dumps(req, ensure_ascii=False) + "\n")
+            self.p.stdin.flush()
+            r = self._read(1800)
+            self.last = time.time()
+            if not r.get("ok"):
+                print("[vox]", r.get("trace"), flush=True)
+                raise RuntimeError("VoxCPM2: " + r.get("error", ""))
+            self.device = r.get("device", self.device)
+            return out.read_bytes()
+
+    def _idle(self):
+        while True:
+            time.sleep(60)
+            if self.p and self.p.poll() is None and time.time() - self.last > 1200 and not self.lock.locked():
+                self.p.terminate()
+                self.p = None
+
+
+VOX = VoxWorker()
+VOX_DESIGNS = {
+    "f1": ("หญิง สดใส", "female", "a young Thai woman with a bright, friendly voice, clear standard Central Thai pronunciation"),
+    "m1": ("ชาย นุ่มลึก", "male", "a Thai man in his thirties with a deep, warm, calm voice, clear standard Central Thai pronunciation"),
+    "news": ("ผู้ประกาศข่าว (หญิง)", "female", "a professional Thai female news anchor, clear and confident, standard Thai"),
+    "m2": ("ชาย พลังงานสูง", "male", "an energetic young Thai man, lively YouTuber style, clear standard Thai"),
+}
+VOX_REF_TEXT = {"female": "สวัสดีค่ะ วันนี้เราจะพาไปรู้จักกับเรื่องใหม่ๆ ที่น่าสนใจ รับรองว่าทุกคนจะต้องชอบแน่นอนค่ะ",
+                "male": "สวัสดีครับ วันนี้เราจะพาไปรู้จักกับเรื่องใหม่ๆ ที่น่าสนใจ รับรองว่าทุกคนจะต้องชอบแน่นอนครับ"}
+
+
+def vox_ref(key):
+    """→ (prompt wav, its transcript) for a VoxCPM2 voice: designed voices are generated once and cached so the timbre stays the same."""
+    if key in VOX_DESIGNS:
+        name, g, desc = VOX_DESIGNS[key]
+        wav, txt = VOICES / f"_vox_{key}.wav", VOX_REF_TEXT[g]
+        if not wav.exists():
+            wav.write_bytes(VOX.generate(text=f"({desc}){txt}", cfg=2.0, steps=12))
+        return str(wav), txt
+    if key.startswith("ds:"):          # the user's recorded dataset: a clean 4–10 s clip with its known sentence
+        d = ds_dir(key[3:])
+        m = ds_meta(d)
+        good = [(k, v) for k, v in m.items() if 4 <= v.get("dur", 0) <= 10 and not v.get("warn") and not (v.get("qc") and not v["qc"].get("ok"))]
+        if not good:
+            raise HTTPException(400, "ยังไม่มีประโยคที่อัดไว้ยาว 4–10 วินาที — อัดในหน้า 🎓 สร้างโมเดลเสียงไทยก่อน")
+        k, v = min(good, key=lambda kv: kv[1].get("noise", 0))
+        return str(d / "wavs" / f"{k}.wav"), v["text"]
+    if key.startswith("clone:"):        # a saved clone voice — transcribe it once with Whisper
+        vid = Path(key[6:]).name
+        wav, tf = VOICES / f"{vid}.wav", VOICES / f"{vid}.txt"
+        if not wav.exists():
+            raise HTTPException(404, "ไม่พบเสียงโคลนนี้บน Mac")
+        if not tf.exists():
+            heard = run_tool_script("whisper", DSQC_CODE, {"model": WHISPER_MODEL, "files": {"a": str(wav)}})
+            tf.write_text(heard.get("a", ""))
+        return str(wav), tf.read_text() or None
+    raise HTTPException(404, "ไม่รู้จักเสียงนี้")
+
+
+def vox_tts(text, key):
+    t0 = time.time()
+    ref, rtxt = vox_ref(key)
+    data = VOX.generate(text=text, prompt_wav=ref, prompt_text=rtxt, cfg=2.0, steps=10)
+    STATS["vox_ms_per_char"] = round((time.time() - t0) * 1000 / max(1, len(text)), 1)
+    return data
+
+
+def vox_speakers():
+    out = [{"id": "vox:" + k, "name": v[0] + " · VoxCPM2", "gender": v[1], "engine": "vox"} for k, v in VOX_DESIGNS.items()]
+    if DS_ROOT.exists():
+        for mf in DS_ROOT.glob("*/meta.json"):
+            try:
+                if len(json.loads(mf.read_text())) >= 3:
+                    out.insert(0, {"id": "vox:ds:" + mf.parent.name, "name": "🎓 เสียงฉัน · VoxCPM2", "gender": None, "engine": "vox", "mine": True})
+            except Exception:  # noqa
+                pass
+    for w in sorted(VOICES.glob("*.wav")):
+        if not w.stem.startswith("_"):
+            out.append({"id": "vox:clone:" + w.stem, "name": "🧬 " + w.stem + " · VoxCPM2", "gender": None, "engine": "vox"})
+    return out
 
 
 def tts_pieces(text, lo=12, hi=70):

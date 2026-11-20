@@ -235,6 +235,9 @@ function renderTrain(){
   const c = status?.count || 0, good = c - (status?.bad || 0), tr = status?.train, md = status?.model;
   const running = tr && (tr.state === 'running' || tr.state === 'starting');
   let h = '';
+  if (c >= 3) h += `<div class="item" style="display:block;margin-bottom:10px"><b>⚡ ใช้เสียงคุณได้เลย ไม่ต้องรอเทรน (VoxCPM2)</b><br><small>VoxCPM2 โคลนเสียงจากประโยคที่คุณอัดไว้ · ไทยชัด · ครั้งแรก Mac โหลดโมเดล ~5GB</small>
+      <textarea id="vxTry" rows="2" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">สวัสดีครับ วันนี้ผมจะมาเล่าเรื่องที่น่าสนใจให้ฟังกัน ฟังเสียงนี้แล้วเหมือนผมไหมครับ</textarea>
+      <div class="row2" style="margin-top:8px"><button class="btn sm" id="vxListen">▶ ฟังเสียงฉัน (VoxCPM2)</button><button class="btn alt sm" id="vxUse">ใช้เป็นเสียงพากย์</button></div></div>`;
   if (md) h += `<div class="item" style="display:block"><b>${GM.esc(md.label)}</b><br><small>ใช้อยู่${md.step ? ' · ขั้นที่ ' + md.step : ''}${md.score ? ` · ชัด ${Math.round((1 - md.score.cer) * 100)}% · เหมือนเสียงคุณ ${Math.round(md.score.sim * 100)}%` : ''} · ${new Date(md.t * 1000).toLocaleString('th-TH')}</small>
       <textarea id="vtTry" rows="2" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">สวัสดีครับ นี่คือเสียงไทยที่ผมเทรนขึ้นมาเอง ฟังชัดไหมครับ</textarea>
       <div class="row2" style="margin-top:8px"><button class="btn sm" id="vtListen">▶ ฟังเสียงโมเดล</button><button class="btn alt sm" id="vtUse">ใช้เป็นเสียงพากย์</button></div></div>`;
@@ -263,6 +266,13 @@ function renderTrain(){
   if (weak.length) h += `<div class="item" style="display:block;margin-top:8px"><b>🎯 จุดที่ยังพูดไม่ชัด</b>${weak.map(w => `<div style="margin-top:6px;font-size:14px">${GM.esc(w.text)}<br><small style="color:#f99">AI ฟังได้: “${GM.esc(w.heard)}”</small></div>`).join('')}
       <button class="btn sm" id="vtWeak" style="width:100%;margin-top:8px">✨ แต่งประโยคฝึกจุดนี้ 30 ประโยค</button></div>`;
   box.innerHTML = h;
+  box.querySelector('#vxListen')?.addEventListener('click', async e => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'กำลังสร้างเสียง… (ครั้งแรกนานหน่อย)';
+    try { const blob = await GM.MAC.tts($('#vxTry').value.trim() || 'สวัสดีครับ', 'vox:ds:' + DS); new Audio(URL.createObjectURL(blob)).play(); }
+    catch(err){ GM.toast(err.message, true); }
+    b.disabled = false; b.textContent = '▶ ฟังเสียงฉัน (VoxCPM2)';
+  });
+  box.querySelector('#vxUse')?.addEventListener('click', async () => { await GM.MAC.refresh(); GM.S.voice = {type: 'mac', id: 'vox:ds:' + DS}; GM.save(); try { GM.renderVoice(); } catch(e){} GM.toast('ตั้งเป็นเสียงพากย์แล้ว'); });
   box.querySelector('#vtWeak')?.addEventListener('click', async e => {
     const b = e.currentTarget; b.disabled = true;
     try {

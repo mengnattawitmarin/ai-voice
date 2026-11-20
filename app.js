@@ -308,8 +308,8 @@ function devForLang(){ return devVoices.filter(v => v.lang.toLowerCase().replace
 const LIC = {
   device: {ok:null, t:'ไม่ยืนยัน (ขึ้นกับระบบมือถือ) · บันทึกเป็นไฟล์ไม่ได้'},
   local: {ok:false, t:'ส่วนตัวเท่านั้น — โมเดล MMS/VITS (CC-BY-NC)'},
-  mac: {ok:true, t:'เชิงพาณิชย์ได้ — KhanomTan TTS v1.1 (Apache-2.0) บน Mac'},
-  clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + OpenVoice V2 (MIT) บน Mac'},
+  mac: {ok:true, t:'เชิงพาณิชย์ได้ — VoxCPM2 / KhanomTan v1.1 (Apache-2.0) บน Mac'},
+  clone: {ok:true, t:'เชิงพาณิชย์ได้ — เสียงของคุณเอง + VoxCPM2 (Apache-2.0) / OpenVoice V2 (MIT) บน Mac'},
   'video-mac': {ok:true, t:'เชิงพาณิชย์ได้ — Wan2.1 T2V 1.3B (Apache-2.0) บน Mac'},
   cover: {ok:null, t:'ดนตรีบันทึกใหม่ของคุณ — แต่ทำนอง/เนื้อร้องเป็นลิขสิทธิ์ผู้แต่ง (ต้องขออนุญาตก่อนใช้เชิงพาณิชย์)'},
   'img-mac': {ok:true, t:'เชิงพาณิชย์ได้ — Z-Image Turbo / FLUX.2 Klein 4B / FLUX.1-schnell / Segmind-Vega (Apache-2.0) บน Mac'},
@@ -407,7 +407,11 @@ const MAC = {
   async tts(text, speaker, voice){ const t0 = performance.now(); const b = await (await this.json('/api/tts', {text, speaker, voice: voice || undefined, lang: S.lang === 'th' ? 'th-th' : S.lang === 'en' ? 'en' : 'th-th'})).blob(); SPEED.learn(voice ? 'clone' : 'mac', (performance.now() - t0) / Math.max(1, text.length)); return b; },
   async editImage(file, prompt, seed){ const t0 = performance.now(); const r = await this.form('/api/img_edit', {image: file, prompt, seed}); const blob = await r.blob(); SPEED.learn('img-mac2-edit', performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
   async image(prompt, w, h, seed){ const t0 = performance.now(); const r = await this.json('/api/txt2img', {prompt, width:w, height:h, seed, mode: S.macImg && S.macImg !== 'auto' ? S.macImg : undefined, lora: S.imgLora || undefined}); const blob = await r.blob(); SPEED.learn('img-mac2-' + curImgMode(), performance.now() - t0); return {blob, seed: +r.headers.get('X-Seed') || seed}; },
-  speakers(){ return this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF; },
+  speakers(){
+    const list = this.info?.speakers?.length ? this.info.speakers : MAC_SPK_DEF;
+    // show the clone's own name instead of its Mac id; clone voices are reached from "เสียงของฉัน" instead
+    return list.filter(s => !String(s.id).startsWith('vox:clone:'));
+  },
 };
 const commercialVoices = () => MAC.on ? MAC.speakers().map(s => ({type:'mac', id:s.id, g:s.gender})) : [];
 setTimeout(() => MAC.refresh(), 300);
@@ -416,7 +420,7 @@ setInterval(() => { if (MAC.on && document.visibilityState === 'visible') MAC.re
 function curVoice(){
   let v = S.voice;
   if (!v && S.commercial && MAC.on){ const c = commercialVoices()[0]; if (c) v = {type:c.type, id:c.id}; }
-  if (v?.type === 'mac'){ const s = MAC.speakers().find(x => x.id === v.id) || MAC.speakers()[0]; return {type:'mac', id:s.id, g:s.gender, name: s.name + ' · Mac', desc: (s.mine ? 'โมเดลเสียงไทยที่คุณเทรนเอง' + (s.step ? ' · ขั้นที่ ' + s.step : '') : 'KhanomTan บน Mac') + ' · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac')}; }
+  if (v?.type === 'mac'){ const s = MAC.speakers().find(x => x.id === v.id) || MAC.speakers()[0]; return {type:'mac', id:s.id, g:s.gender, name: s.name + ' · Mac', desc: (s.engine === 'vox' ? (s.mine ? 'VoxCPM2 โคลนจากเสียงที่คุณอัด · ไทยชัด' : 'VoxCPM2 · ไทยชัด') : s.mine ? 'โมเดลเสียงไทยที่คุณเทรนเอง' + (s.step ? ' · ขั้นที่ ' + s.step : '') : 'KhanomTan บน Mac (สำเนียงยุโรป)') + ' · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac')}; }
   if (v?.type === 'local'){ const l = LOCAL_VOICES.find(x => x[0] === v.id) || LOCAL_VOICES[0]; return {type:'local', id:l[0], name:l[1], desc:'เสียง AI ฟรี ประมวลผลในเครื่อง · ดาวน์โหลดได้ · 🚫 ส่วนตัว'}; }
   if (v?.type === 'clone'){ const c = clones.find(x => x.id === v.id); if (c) return {type:'clone', id:c.id, name:c.name, desc:'เสียงของฉัน (OpenVoice บน Mac) · 💼 เชิงพาณิชย์ได้' + (MAC.on ? '' : ' · ⚠️ ยังไม่ได้เชื่อม Mac'), rec:c}; }
   const list = devForLang();
@@ -441,11 +445,11 @@ $('#btnVoice').onclick = () => {
   const row = (k, n, d, on) => `<button class="opt ${on?'on':''}" data-k="${esc(k)}"><span class="dot"></span><span class="t"><b>${n}</b><small>${d}</small></span></button>`;
   let h = sheetHead('เลือกเสียง');
   h += `<label class="switch" style="margin:0 0 6px"><span>💼 โหมดเชิงพาณิชย์ (ทำวิดีโอหารายได้)<br><small style="color:var(--mut)">ดาวน์โหลด/แชร์/บันทึกได้เฉพาะเสียงที่สัญญาอนุญาตเชิงพาณิชย์</small></span><input type="checkbox" id="vComm" ${S.commercial ? 'checked' : ''}></label>`;
-  h += `<h4>💼 เสียงพากย์บน Mac — KhanomTan ${MAC.on ? (MAC.state === 'on' ? '<span class="tag ok">เชื่อมแล้ว</span>' : '<span class="tag warn">Mac ออฟไลน์?</span>') : ''}</h4>`;
-  h += MAC.on ? MAC.speakers().map(s => row('mac:' + s.id, esc(s.name) + ' ' + licTag('mac'), 'อ่านไทยได้ · ประมวลผลบน GPU ของ Mac · ไม่มีโควตา', v.type === 'mac' && v.id === s.id)).join('')
+  h += `<h4>💼 เสียงพากย์บน Mac ${MAC.on ? (MAC.state === 'on' ? '<span class="tag ok">เชื่อมแล้ว</span>' : '<span class="tag warn">Mac ออฟไลน์?</span>') : ''}</h4>`;
+  h += MAC.on ? MAC.speakers().map(s => row('mac:' + s.id, esc(s.name) + ' ' + licTag('mac'), s.engine === 'vox' ? '⭐ แนะนำ — ไทยชัด เสียงธรรมชาติ · ครั้งแรกโหลดโมเดล ~5GB' : s.mine ? 'โมเดลที่คุณเทรนเอง' : 'KhanomTan · สำเนียงยุโรป อาจฟังยาก', v.type === 'mac' && v.id === s.id)).join('')
     : `<button class="opt" data-mac><span class="dot"></span><span class="t"><b>＋ เชื่อมต่อ Mac</b><small>เปิดแอป Gen Medi บน Mac แล้วสแกน QR — ได้เสียงพากย์ที่ใช้หารายได้ได้ + สร้างภาพ</small></span></button>`;
   h += `<h4>💼 เสียงของฉัน (โคลนจากเสียงตัวเอง)</h4>`;
-  h += clones.map(c => row('clone:' + c.id, esc(c.name) + ' ' + licTag('clone'), 'KhanomTan → แปลงเป็นเสียงคุณด้วย OpenVoice บน Mac', v.type === 'clone' && v.id === c.id)).join('');
+  h += clones.map(c => row('clone:' + c.id, esc(c.name) + ' ' + licTag('clone'), 'VoxCPM2 โคลนเสียงคุณบน Mac · ไทยชัด', v.type === 'clone' && v.id === c.id)).join('');
   h += `<button class="opt" data-gclone><span class="dot"></span><span class="t"><b>＋ เพิ่มเสียงของฉัน</b><small>อัดเสียงตัวเอง 10 วินาที</small></span></button>`;
   const locs = LOCAL_VOICES.filter(l => l[2] === S.lang);
   if (locs.length){
@@ -757,7 +761,7 @@ const pkey = (v, text) => v.type + ':' + v.id + '|' + (v.type === 'device' ? '' 
 function prepare(v, text){
   const key = pkey(v, text);
   if (P.key !== key){
-    const max = v.type === 'device' ? 180 : v.type === 'local' ? 140 : 120;
+    const max = v.type === 'device' ? 180 : v.type === 'local' ? 140 : (v.type === 'clone' && S.cloneEngine !== 'openvoice') || String(v.id || '').startsWith('vox:') ? 260 : 120;
     P.chunks = makeChunks(text, max); P.blobs = []; P.pending = []; P.key = key; P.lastFile = null;
   }
   P.voice = v;
@@ -1052,7 +1056,8 @@ async function macVoiceId(rec){
 async function cloneTTS(text, rec){
   if (!rec) throw new Error('ไม่พบเสียงนี้แล้ว');
   const vid = await macVoiceId(rec);
-  const spk = MAC.speakers(), base = spk.find(s => s.gender === (rec.gender || 'm')) || spk[0];
+  if (S.cloneEngine !== 'openvoice') return MAC.tts(text, 'vox:clone:' + vid);   // VoxCPM2 clones directly — clear Thai
+  const spk = MAC.speakers().filter(s => !s.engine), base = spk.find(s => s.gender === (rec.gender || 'm')) || spk[0];   // old path: KhanomTan → OpenVoice
   return MAC.tts(text, base.id, vid);
 }
 
