@@ -48,6 +48,11 @@ function shell(root){
     <div class="row2" style="margin-top:10px"><button class="btn alt sm" id="vtPlay" disabled>▶ ฟังที่อัด</button><button class="btn alt sm" id="vtRedo" disabled>↺ อัดใหม่</button><button class="btn alt sm" id="vtSkip">⏭ ข้าม</button></div>
     <p class="hint" id="vtTip">ห้องเงียบ · ไมค์เดิม ระยะเดิม (~20 ซม.) · อ่านเป็นธรรมชาติด้วยน้ำเสียงเดิมทุกประโยค · บน Mac กด <b>Space</b> เพื่ออัด/หยุด</p>
   </div>
+  <div class="card"><div class="card-h"><h2>⚡ นำเข้าจากไฟล์เสียงเก่า (ไม่ต้องอ่านทีละประโยค)</h2></div>
+    <p class="hint" style="margin-top:0">มีคลิป/ไลฟ์/พอดแคสต์ที่คุณพูดเองอยู่แล้ว? อัปโหลดได้เลย — Whisper ถอดเสียง ตัดเป็นประโยค และใส่ชุดข้อมูลให้อัตโนมัติ · ต้องเป็นเสียงคุณคนเดียว ไม่มีเพลงพื้นหลัง ไม่มีคนอื่นพูดแทรก</p>
+    <label class="btn alt sm" style="display:block;text-align:center">📁 เลือกไฟล์เสียง/วิดีโอ (ยาวได้หลายชั่วโมง)<input type="file" id="vtImp" accept="audio/*,video/*" multiple hidden></label>
+    <p class="hint" id="vtImpSt"></p>
+  </div>
   <div class="card"><div class="card-h"><h2>📚 ประโยคสำหรับอ่าน</h2></div>
     <p class="hint" style="margin-top:0" id="vtPoolInfo"></p>
     <button class="btn alt sm" id="vtAi" style="width:100%">✨ ให้ AI บน Mac แต่งประโยคเพิ่ม 60 ประโยค</button>
@@ -60,7 +65,16 @@ function shell(root){
     <button class="btn alt sm" id="vtCheck" style="width:100%">ตรวจประโยคที่ยังไม่ได้ตรวจ</button>
     <div id="vtBad" style="margin-top:10px"></div>
   </div>
-  <div class="card"><div class="card-h"><h2>🧠 เทรนโมเดล</h2></div><div id="vtTrain"></div></div>`;
+  <div class="card"><div class="card-h"><h2>🧠 เทรนโมเดล</h2></div>
+    <label class="lbl2" style="margin-top:0">เทรนอัตโนมัติ</label>
+    <div class="chips" id="vtAuto"><button class="chip" data-v="off">ปิด</button><button class="chip" data-v="night">🌙 ตอนกลางคืน (เที่ยงคืน–6 โมง)</button><button class="chip" data-v="now">ทันทีเมื่อถึงเกณฑ์</button></div>
+    <p class="hint">เริ่มเองเมื่อครบ 300 ประโยค แล้วเทรนต่อเองทุกครั้งที่อัดเพิ่มอีก 100 ประโยค (ตอน Mac ว่าง) · ตรวจคุณภาพด้วย Whisper ให้เองทุก 50 ประโยค</p>
+    <label class="switch"><span>⚡ โหมดเร็ว<br><small style="color:var(--mut)">ล็อกส่วนอ่านตัวอักษรไทยที่โมเดลรู้แล้ว เทรนเฉพาะเสียงและจังหวะ</small></span><input type="checkbox" id="vtFast"></label>
+    <div id="vtTrain" style="margin-top:12px"></div></div>
+  <div class="card"><div class="card-h"><h2>📦 สำรอง / ย้ายไปเครื่องอื่น</h2></div>
+    <p class="hint" style="margin-top:0">ไฟล์ zip เดียว: โมเดลเสียงที่เทรน · LoRA ภาพ · ชุดข้อมูลเสียง · เสียงโคลน (ไม่รวมโมเดลพื้นฐานที่ดาวน์โหลดใหม่ได้)</p>
+    <div class="row2"><button class="btn alt sm" id="vtBak">⬇️ ดาวน์โหลดไฟล์สำรอง</button><label class="btn alt sm" style="text-align:center">⬆️ กู้คืนจากไฟล์<input type="file" id="vtRes2" accept=".zip,application/zip" hidden></label></div>
+  </div>`;
 }
 
 async function render(){
@@ -77,7 +91,25 @@ async function render(){
   $('#vtSent').textContent = cur ? cur.t : 'อ่านครบทุกประโยคในคิวแล้ว 🎉 — ให้ AI แต่งเพิ่ม หรือใส่บทของคุณเองด้านล่าง';
   $('#vtMic').disabled = !cur;
   $('#vtPoolInfo').textContent = `ในคิวทั้งหมด ${n.total} ประโยค (พื้นฐาน ${base.length} · ของฉัน ${st.custom.length} · AI ${st.ai.length}) — เป้าหมาย ${TARGET} ประโยค ≈ 1 ชั่วโมง`;
+  const se = status.settings || {};
+  document.querySelectorAll('#vtAuto .chip').forEach(b => b.classList.toggle('on', b.dataset.v === (se.auto || 'off')));
+  $('#vtFast').checked = se.fast !== false;
   renderBad(); renderTrain();
+}
+
+async function backup(){
+  GM.toast('Mac กำลังรวมไฟล์สำรอง…');
+  try {
+    const r = await GM.MAC.call('/api/backup', {}, 30 * 60e3);
+    const name = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)/)?.[1] || 'GenMedi-backup.zip';
+    GM.saveBlob(await r.blob(), name);
+  } catch(e){ GM.toast('สำรองไม่สำเร็จ: ' + e.message, true); }
+}
+async function restore(file){
+  if (!file) return;
+  if (!confirm('กู้คืนจาก ' + file.name + '? ไฟล์ชื่อซ้ำบน Mac จะถูกแทนที่')) return;
+  try { const r = await (await GM.MAC.form('/api/restore', {file}, 30 * 60e3)).json(); GM.toast(`กู้คืนแล้ว ${r.restored} ไฟล์`); await GM.MAC.refresh(); render(); }
+  catch(e){ GM.toast('กู้คืนไม่สำเร็จ: ' + e.message, true); }
 }
 
 function renderBad(){
@@ -136,6 +168,26 @@ async function upload(blob, sent){
 }
 
 function bind(){
+  document.querySelectorAll('#vtAuto .chip').forEach(b => b.onclick = async () => {
+    try { await GM.MAC.form('/api/ds/' + DS + '/settings', {auto: b.dataset.v}); document.querySelectorAll('#vtAuto .chip').forEach(x => x.classList.toggle('on', x === b)); GM.toast(b.dataset.v === 'off' ? 'ปิดเทรนอัตโนมัติ' : 'เปิดเทรนอัตโนมัติแล้ว'); }
+    catch(e){ GM.toast(e.message, true); }
+  });
+  $('#vtFast').onchange = e => GM.MAC.form('/api/ds/' + DS + '/settings', {fast: e.target.checked ? 1 : 0}).catch(err => GM.toast(err.message, true));
+  $('#vtBak').onclick = backup;
+  $('#vtRes2').onchange = e => { restore(e.target.files[0]); e.target.value = ''; };
+  $('#vtImp').onchange = async e => {
+    const files = [...e.target.files]; e.target.value = ''; const stEl = $('#vtImpSt');
+    for (const [i, f] of files.entries()){
+      try {
+        stEl.textContent = `กำลังส่งไฟล์ ${i + 1}/${files.length} ให้ Mac… (${(f.size / 1e6).toFixed(0)} MB)`;
+        const fd = new FormData(); fd.append('audio', f, f.name);
+        const r = await window.GMTools.macJob('/api/ds/' + DS + '/import', fd, j => { stEl.textContent = `ไฟล์ ${i + 1}/${files.length}: ` + (j.state === 'queued' ? 'รอคิวบน Mac…' : (j.msg || '') + (j.total && j.step ? ` ${j.step}/${j.total}` : '')); });
+        const res = await r.json().catch(() => ({}));
+        stEl.textContent = `✓ ไฟล์ ${i + 1}: เพิ่ม ${res.added ?? '?'} ประโยค · ข้าม ${res.skipped ?? '?'}`;
+      } catch(err){ stEl.textContent = 'ไม่สำเร็จ: ' + err.message; break; }
+    }
+    render();
+  };
   $('#vtMic').onclick = toggleRec;
   $('#vtPlay').onclick = () => lastKey && play(lastKey);
   $('#vtRedo').onclick = () => { const v = lastKey && status?.items?.[lastKey]; if (v){ cur = {t: v.text, k: lastKey}; $('#vtSent').textContent = v.text; $('#vtRes').innerHTML = ''; toggleRec(); } };
@@ -223,4 +275,4 @@ function renderTrain(){
 }
 
 window.addEventListener('gm:page', e => { if (e.detail === 'voicetrain') render(); });
-window.GMVoiceTrain = { render };
+window.GMVoiceTrain = { render, backup, restore };

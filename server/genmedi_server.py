@@ -1358,25 +1358,100 @@ def lora_status(name: str):
     meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
     imgs = sorted(p.name for p in (d / "images").glob("*.png"))
     t = {k: v for k, v in (LORA_TRAIN.get(d.name) or {}).items() if k != "proc"} or None
-    return {"name": d.name, "images": imgs, "meta": meta, "train": t, "ready": (LORAS / f"{d.name}.safetensors").exists()}
+    prev = sorted(p.name for p in (d / "previews").glob("*.png")) if (d / "previews").exists() else []
+    return {"name": d.name, "images": imgs, "meta": meta, "train": t, "ready": (LORAS / f"{d.name}.safetensors").exists(), "previews": prev}
+
+
+@app.get("/api/lora/{name}/preview/{fn}")
+def lora_preview(name: str, fn: str):
+    return FileResponse(lora_dir(name) / "previews" / Path(fn).name, media_type="image/png")
+
+
+def img_sig(im):
+    """Tiny grayscale thumbnail (for near-duplicate detection), mean brightness and sharpness (variance of a Laplacian)."""
+    import numpy as np
+    g = np.asarray(im.convert("L").resize((256, 256)), dtype=np.float32)
+    lap = g[1:-1, 1:-1] * 4 - g[:-2, 1:-1] - g[2:, 1:-1] - g[1:-1, :-2] - g[1:-1, 2:]
+    thumb = np.asarray(im.convert("L").resize((16, 16)), dtype=np.float32)
+    return thumb, float(g.mean()), float(lap.var())
+
+
+def lora_add_images(d, pil_images, limit=None):
+    """Save pictures for training, skipping near-duplicates and very dark ones."""
+    from PIL import Image, ImageOps
+    import numpy as np
+    have = []
+    for p in (d / "images").glob("*.png"):
+        try:
+            with Image.open(p) as im:
+                have.append(img_sig(im)[0])
+        except Exception:  # noqa
+            pass
+    added = dup = dark = 0
+    for im in pil_images:
+        im = ImageOps.exif_transpose(im).convert("RGB")
+        th, bright, _ = img_sig(im)
+        if bright < 28:
+            dark += 1
+            continue
+        if any(float(np.abs(th - h).mean()) < 6 for h in have):
+            dup += 1
+            continue
+        s_ = min(1.0, 1024 / max(im.size))
+        if s_ < 1:
+            im = im.resize((int(im.width * s_), int(im.height * s_)), Image.LANCZOS)
+        im.save(d / "images" / f"{secrets.token_hex(4)}.png")
+        have.append(th)
+        added += 1
+        if limit and added >= limit:
+            break
+    return {"added": added, "dup": dup, "dark": dark, "count": len(list((d / "images").glob("*.png")))}
 
 
 @app.post("/api/lora/{name}/images")
 async def lora_images(name: str, files: list[UploadFile] = File(...)):
-    from PIL import Image, ImageOps
+    from PIL import Image
     d = lora_dir(name)
-    n = 0
+    ims = []
     for f in files:
         try:
-            im = ImageOps.exif_transpose(Image.open(io.BytesIO(await f.read()))).convert("RGB")
-            s = min(1.0, 1024 / max(im.size))
-            if s < 1:
-                im = im.resize((int(im.width * s), int(im.height * s)), Image.LANCZOS)
-            im.save(d / "images" / f"{secrets.token_hex(4)}.png")
-            n += 1
+            ims.append(Image.open(io.BytesIO(await f.read())))
         except Exception:  # noqa
             pass
-    return {"added": n, "count": len(list((d / "images").glob("*.png")))}
+    return lora_add_images(d, ims)
+
+
+@app.post("/api/lora/{name}/video")
+async def lora_video(name: str, video: UploadFile = File(...), n: int = Form(25)):
+    """A short video circling the subject → the sharpest, most varied frames as training pictures."""
+    from PIL import Image
+    d = lora_dir(name)
+    work = Path(tempfile.mkdtemp(prefix="gm-vid-"))
+    src = work / ("in" + (Path(video.filename or "a.mp4").suffix or ".mp4"))
+    src.write_bytes(await video.read())
+
+    def run():
+        subprocess.run([ffmpeg_bin(), "-y", "-i", str(src), "-vf", "fps=5,scale='min(1280,iw)':-2", "-q:v", "3", str(work / "f%04d.jpg")], capture_output=True)
+        frames = sorted(work.glob("f*.jpg"))
+        if not frames:
+            raise HTTPException(400, "อ่านวิดีโอไม่ได้")
+        scored = []
+        for f in frames:
+            with Image.open(f) as im:
+                _, bright, sharp = img_sig(im)
+            scored.append((f, sharp, bright))
+        k = max(1, min(int(n), 40))
+        bins = [scored[i * len(scored) // k:(i + 1) * len(scored) // k] for i in range(k)]   # spread over the whole video = many angles
+        picks = [max(b, key=lambda x: x[1]) for b in bins if b]
+        med = sorted(x[1] for x in scored)[len(scored) // 2]
+        picks = [p for p in picks if p[1] >= med * 0.35]   # drop motion-blurred frames
+        r = lora_add_images(d, [Image.open(p[0]) for p in picks])
+        r["frames"] = len(frames)
+        return r
+    try:
+        return await run_in_threadpool(run)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 @app.delete("/api/lora/{name}/images/{fn}")
@@ -1390,7 +1465,7 @@ def lora_image_get(name: str, fn: str):
     return FileResponse(lora_dir(name) / "images" / Path(fn).name, media_type="image/png")
 
 
-def lora_train_worker(name, kind, desc, label, steps):
+def lora_train_worker(name, kind, desc, label, steps, fast=False):
     d = lora_dir(name)
     t = LORA_TRAIN[d.name]
     imgs = sorted((d / "images").glob("*.png"))
@@ -1404,9 +1479,12 @@ def lora_train_worker(name, kind, desc, label, steps):
         (data / (p.stem + ".txt")).write_text(cap)
     epochs = max(4, math.ceil(steps / max(1, len(imgs))))
     out = d / "train"
-    tgt = [{"module_path": f"transformer_blocks.{{block}}.attn.{m}", "blocks": {"start": 0, "end": 5}, "rank": 16} for m in ("to_q", "to_k", "to_v")]
+    rank = 8 if fast else 16
+    tgt = [{"module_path": f"transformer_blocks.{{block}}.attn.{m}", "blocks": {"start": 0, "end": 5}, "rank": rank} for m in ("to_q", "to_k", "to_v")]
+    big = (RAM_GB or 16) >= 24
     cfg = {"model": "flux2-klein-base-4b", "data": str(data), "seed": 42, "steps": 20, "guidance": 1.0,
-           "quantize": 8 if (RAM_GB or 16) >= 24 else 4, "low_ram": (RAM_GB or 16) < 24, "gradient_checkpointing": True, "max_resolution": 768 if (RAM_GB or 16) < 24 else 1024,
+           "quantize": 4 if (fast or not big) else 8, "low_ram": not big, "gradient_checkpointing": True,
+           "max_resolution": 512 if fast else (1024 if big else 768),
            "training_loop": {"num_epochs": epochs, "batch_size": 1, "timestep_low": 0, "timestep_high": 20},
            "optimizer": {"name": "AdamW", "learning_rate": 1e-4},
            "checkpoint": {"output_path": str(out), "save_frequency": max(50, steps // 6)},
@@ -1453,6 +1531,21 @@ def lora_train_worker(name, kind, desc, label, steps):
     t.pop("proc", None)
     t["tail"] = tail[-10:]
     ok = lora_export(d.name)
+    if ok and not t.get("stop"):
+        t["msg"] = "เทรนเสร็จ — กำลังวาดภาพตัวอย่าง…"
+        prev = d / "previews"
+        shutil.rmtree(prev, ignore_errors=True)
+        prev.mkdir()
+        scenes = {"product": ["on a wooden table in a bright cafe, soft morning light", "studio product shot on a clean white background"],
+                  "character": ["waving hello in a sunny park", "sitting on a stack of books, cozy room"],
+                  "person": ["portrait in a city street at golden hour", "smiling, sitting in a modern office"],
+                  "style": ["a quiet Thai temple at sunset", "a busy night market"]}.get(kind, ["on a table", "outdoors"])
+        for i, sc in enumerate(scenes):
+            try:
+                with LOCK:
+                    gen_klein_lora(sc, 768, 768, 100 + i, d.name).save(prev / f"p{i + 1}.png")
+            except Exception as e:  # noqa
+                print("[lora] preview", e, flush=True)
     if t.get("stop"):
         t.update(state="stopped", msg="หยุดแล้ว" + (" — ใช้ผลล่าสุดได้" if ok else ""))
     elif ok:
@@ -1488,7 +1581,7 @@ def lora_export(name):
 
 
 @app.post("/api/lora/{name}/train")
-def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200)):
+def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200), fast: int = Form(0)):
     d = lora_dir(name)
     if (LORA_TRAIN.get(d.name) or {}).get("state") == "running":
         raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
@@ -1496,7 +1589,7 @@ def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), lab
     if n < 6:
         raise HTTPException(400, f"ภาพน้อยเกินไป ({n}) — ต้องมีอย่างน้อย 6 ภาพ (แนะนำ 15–40)")
     LORA_TRAIN[d.name] = {"state": "starting", "msg": "กำลังเริ่ม…", "step": 0}
-    threading.Thread(target=lambda: _safe(lora_train_worker, d.name, kind, desc.strip()[:200], label.strip()[:40], int(steps)), daemon=True).start()
+    threading.Thread(target=lambda: _safe(lora_train_worker, d.name, kind, desc.strip()[:200], label.strip()[:40], int(steps), bool(fast)), daemon=True).start()
     return {"ok": True}
 
 
@@ -1646,7 +1739,7 @@ def ds_status(name: str):
     tot = sum(v.get("dur", 0) for v in m.values())
     return {"name": d.name, "count": len(m), "minutes": round(tot / 60, 1), "items": m,
             "checked": sum(1 for v in m.values() if v.get("qc")), "bad": sum(1 for v in m.values() if v.get("qc") and not v["qc"].get("ok")),
-            "train": {k: v for k, v in (TRAIN.get(d.name) or {}).items() if k != "proc"} or None,
+            "train": {k: v for k, v in (TRAIN.get(d.name) or {}).items() if k != "proc"} or None, "settings": ds_settings(d),
             "model": (json.loads((MY_MODELS / d.name / "meta.json").read_text()) if (MY_MODELS / d.name / "meta.json").exists() else None)}
 
 
@@ -1663,6 +1756,9 @@ async def ds_clip(name: str, audio: UploadFile = File(...), text: str = Form(...
     m = ds_meta(d)
     m[key] = {"text": text, "dur": dur, "noise": noise, "warn": warn, "t": int(time.time()), "qc": None}
     ds_save_meta(d, m)
+    # every 50 unchecked clips → let Whisper check them in the background (no button needed)
+    if sum(1 for v in m.values() if not v.get("qc")) >= 50 and not any(x.get("kind") == "dsqc" and x["state"] in ("queued", "running") for x in JOBS.values()):
+        submit("dsqc", job_dsqc, (d.name, False), {"prompt": "ตรวจชุดเสียงอัตโนมัติ"})
     return {"key": key, "dur": dur, "warn": warn, "count": len(m), "minutes": round(sum(v.get("dur", 0) for v in m.values()) / 60, 1)}
 
 
@@ -1736,6 +1832,187 @@ def job_dsqc(jid, name, all_):
 def ds_check(name: str, all: int = Form(0)):
     jid = submit("dsqc", job_dsqc, (ds_dir(name).name, bool(all)), {"prompt": "ตรวจชุดเสียง " + name})
     return {"job": jid, "pos": queue_pos(jid)}
+
+
+DSIMP_CODE = """
+import sys, json, mlx_whisper
+a = json.load(open(sys.argv[1]))
+r = mlx_whisper.transcribe(a['wav'], path_or_hf_repo=a['model'], language='th', condition_on_previous_text=False, verbose=None)
+segs = [{k: s.get(k) for k in ('start', 'end', 'text', 'avg_logprob', 'no_speech_prob', 'compression_ratio')} for s in r.get('segments', [])]
+json.dump(segs, open(sys.argv[2], 'w'), ensure_ascii=False)
+"""
+
+
+def job_dsimport(jid, name, src):
+    """A long recording of the user's own voice → sentence clips with Whisper's transcript as the label."""
+    import numpy as np
+    import librosa
+    j = JOBS[jid]
+    d = ds_dir(name)
+    j.update(state="running", msg="แปลงไฟล์เสียง…", t0=time.time())
+    wav16 = src + ".16k.wav"
+    subprocess.run([ffmpeg_bin(), "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000", wav16], capture_output=True, check=True)
+    j["msg"] = "Whisper กำลังถอดเสียงและแบ่งประโยค… (ไฟล์ 1 ชม. ใช้หลายนาที)"
+    with LOCK:
+        segs = run_tool_script("whisper", DSIMP_CODE, {"model": WHISPER_MODEL, "wav": wav16}, j, timeout=4 * 3600)
+    # merge very short neighbours, keep 1.5–12 s pieces that Whisper was confident about
+    pieces, cur = [], None
+    for sg in segs:
+        t = (sg.get("text") or "").strip()
+        if not t:
+            continue
+        if cur and sg["start"] - cur["end"] < 0.35 and (cur["end"] - cur["start"]) < 1.5 and (sg["end"] - cur["start"]) < 12:
+            cur.update(end=sg["end"], text=cur["text"] + " " + t, lp=min(cur["lp"], sg.get("avg_logprob") or 0), ns=max(cur["ns"], sg.get("no_speech_prob") or 0))
+            continue
+        if cur:
+            pieces.append(cur)
+        cur = {"start": sg["start"], "end": sg["end"], "text": t, "lp": sg.get("avg_logprob") or 0, "ns": sg.get("no_speech_prob") or 0, "cr": sg.get("compression_ratio") or 1}
+    if cur:
+        pieces.append(cur)
+    good = [p for p in pieces if 1.5 <= p["end"] - p["start"] <= 12 and p["lp"] > -0.7 and p["ns"] < 0.5 and p["cr"] < 2.4 and len(p["text"]) >= 4]
+    j.update(msg=f"ตัดเป็นประโยค {len(good)} จาก {len(pieces)} ช่วง…", total=len(good), step=0)
+    y, sr = librosa.load(src, sr=22050, mono=True)
+    import soundfile as sf
+    m = ds_meta(d)
+    added, skipped = 0, len(pieces) - len(good)
+    for n, p in enumerate(good):
+        a, b = max(0, int((p["start"] - 0.08) * sr)), min(len(y), int((p["end"] + 0.12) * sr))
+        tmp = src + f".seg{n}.wav"
+        sf.write(tmp, y[a:b], sr, subtype="PCM_16")
+        text = re.sub(r"\s+", " ", p["text"]).strip()
+        key = ds_key(text)
+        try:
+            dur, warn, noise = ds_process(tmp, str(d / "wavs" / f"{key}.wav"))
+            m[key] = {"text": text, "dur": dur, "noise": noise, "warn": warn, "t": int(time.time()), "src": "import",
+                      "qc": {"ok": not warn, "cer": 0, "heard": text, "auto": True}}
+            added += 1
+        except Exception:  # noqa
+            skipped += 1
+        Path(tmp).unlink(missing_ok=True)
+        j["step"] = n + 1
+    ds_save_meta(d, m)
+    for f in (src, wav16):
+        Path(f).unlink(missing_ok=True)
+    mins = round(sum(m[k]["dur"] for k in m if m[k].get("src") == "import") / 60, 1)
+    j.update(state="done", result={"added": added, "skipped": skipped}, msg=f"เพิ่ม {added} ประโยค · ข้าม {skipped} (ไม่ชัด/สั้น/ยาวเกิน) · จากไฟล์รวม {mins} นาที",
+             ms=round((time.time() - j["t0"]) * 1000))
+
+
+@app.post("/api/ds/{name}/import")
+async def ds_import(name: str, audio: UploadFile = File(...)):
+    d = ds_dir(name)
+    src = DATA / f"imp-{secrets.token_hex(4)}{Path(audio.filename or 'a.m4a').suffix or '.m4a'}"
+    with open(src, "wb") as f:
+        while True:
+            chunk = await audio.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+    jid = submit("dsimport", job_dsimport, (d.name, str(src)), {"prompt": "นำเข้าเสียงยาว → ชุดข้อมูล"})
+    return {"job": jid, "pos": queue_pos(jid)}
+
+
+def ds_settings(d):
+    try:
+        return {"auto": "off", "fast": True, **json.loads((d / "settings.json").read_text())}
+    except Exception:  # noqa
+        return {"auto": "off", "fast": True}
+
+
+@app.post("/api/ds/{name}/settings")
+def ds_settings_set(name: str, auto: str = Form(None), fast: int = Form(None)):
+    d = ds_dir(name)
+    st = ds_settings(d)
+    if auto in ("off", "night", "now"):
+        st["auto"] = auto
+    if fast is not None:
+        st["fast"] = bool(fast)
+    (d / "settings.json").write_text(json.dumps(st))
+    return st
+
+
+def ds_good_count(d):
+    return sum(1 for v in ds_meta(d).values() if not (v.get("qc") and not v["qc"].get("ok")) and v.get("dur", 0) <= 12)
+
+
+def auto_train_loop():
+    """Start/continue voice training by itself: first time at 300 good clips, then after every +100 clips."""
+    while True:
+        time.sleep(300)
+        try:
+            for sf_ in DS_ROOT.glob("*/settings.json") if DS_ROOT.exists() else []:
+                d = sf_.parent
+                st = ds_settings(d)
+                if st["auto"] == "off" or (TRAIN.get(d.name) or {}).get("state") in ("running", "starting"):
+                    continue
+                if st["auto"] == "night" and not (0 <= datetime.now().hour < 6):
+                    continue
+                if any(x["state"] in ("queued", "running") for x in JOBS.values()):
+                    continue   # don't fight the user's own work for the GPU
+                good = ds_good_count(d)
+                done = json.loads((d / "trained.json").read_text()).get("clips", 0) if (d / "trained.json").exists() else 0
+                has = (MY_MODELS / d.name / "model.pth").exists()
+                if (not has and good >= 300) or (has and good - done >= 100):
+                    print(f"[auto-train] {d.name}: {good} clips (last {done})", flush=True)
+                    TRAIN[d.name] = {"state": "starting", "msg": "เริ่มเทรนอัตโนมัติ…", "step": 0, "total": 8000, "resume": has, "auto": True}
+                    threading.Thread(target=lambda n=d.name: _safe(train_worker, n, 8000 if not has else 3000, "mps" if torch_device() == "mps" else "cpu"), daemon=True).start()
+        except Exception as e:  # noqa
+            print("[auto-train]", e, flush=True)
+
+
+threading.Thread(target=auto_train_loop, daemon=True).start()
+
+
+BACKUP_DIRS = ("mymodels", "loras", "datasets", "lora-data")
+
+
+@app.get("/api/backup")
+def backup(t: str = ""):
+    """One zip with everything the user made/trained (not the big downloadable base models)."""
+    import zipfile
+    out = Path(tempfile.mkdtemp(prefix="gm-bak-")) / f"GenMedi-backup-{datetime.now().strftime('%Y%m%d-%H%M')}.zip"
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
+        for top in BACKUP_DIRS:
+            base = DATA / top
+            if not base.exists():
+                continue
+            for p in base.rglob("*"):
+                rel = p.relative_to(DATA)
+                if p.is_file() and not any(x in rel.parts for x in ("train", "data", "previews")) and p.suffix not in (".tmp",):
+                    z.write(p, str(rel))
+        for vf in VOICES.glob("*.wav"):
+            if not vf.stem.startswith("_kt_"):
+                z.write(vf, str(Path("voices") / vf.name))
+    return FileResponse(out, media_type="application/zip", filename=out.name)
+
+
+@app.post("/api/restore")
+async def restore(file: UploadFile = File(...)):
+    import zipfile
+    tmp = DATA / f"restore-{secrets.token_hex(4)}.zip"
+    with open(tmp, "wb") as f:
+        while True:
+            chunk = await file.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+    n = 0
+    try:
+        with zipfile.ZipFile(tmp) as z:
+            for info in z.infolist():
+                parts = Path(info.filename).parts
+                if info.is_dir() or not parts or parts[0] not in (*BACKUP_DIRS, "voices") or ".." in parts or info.filename.startswith("/"):
+                    continue
+                dst = (VOICES / parts[-1]) if parts[0] == "voices" else DATA.joinpath(*parts)
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_bytes(z.read(info))
+                n += 1
+    except zipfile.BadZipFile:
+        raise HTTPException(400, "ไฟล์ไม่ใช่ zip สำรองของ Gen Medi")
+    finally:
+        tmp.unlink(missing_ok=True)
+    _my.clear()
+    return {"restored": n}
 
 
 TRAIN = {}
@@ -1812,6 +2089,14 @@ cfg.test_delay_epochs = 10 ** 6
 cfg.test_sentences = []
 cfg.lr_gen = cfg.lr_disc = a["lr"]
 cfg.print_eval = False
+if a.get("fast"):
+    # KhanomTan already reads Thai script — keep its text encoder fixed, learn the new voice + rhythm only (fewer weights → faster, needs less data)
+    for k in ("freeze_encoder",):
+        if hasattr(cfg.model_args, k):
+            setattr(cfg.model_args, k, True)
+    cfg.run_eval_steps = None
+    if hasattr(cfg, "run_eval_steps"):
+        cfg.run_eval_steps = 1000
 print(f"GMSTAGE train total={cfg.epochs * steps_ep}", flush=True)
 
 model = Vits.init_from_config(cfg, train + evals)
@@ -1844,12 +2129,12 @@ def train_worker(name, steps, device):
     d, work = train_paths(name)
     t = TRAIN[d.name]
     m = ds_meta(d)
-    items = [(k, v["text"].replace("|", " ")) for k, v in m.items() if not (v.get("qc") and not v["qc"].get("ok")) and (d / "wavs" / f"{k}.wav").exists()]
+    items = [(k, v["text"].replace("|", " ")) for k, v in m.items() if not (v.get("qc") and not v["qc"].get("ok")) and v.get("dur", 0) <= 12 and (d / "wavs" / f"{k}.wav").exists()]
     kt = Path(ensure_model("tts"))
     get_kt()   # writes the fixed KhanomTan config with absolute paths
     args = {"base_config": str(DATA / "khanomtan-config.json"), "ckpt": str(kt / "best_model.pth"), "se_model": str(kt / "model_se.pth"),
             "se_config": str(kt / "config_se.json"), "src": str(d / "wavs"), "work": str(work), "items": items, "speaker": d.name,
-            "steps": steps, "batch": 16 if (RAM_GB or 16) >= 24 else 8, "save_step": 500, "lr": 1e-4, "device": device}
+            "steps": steps, "batch": 16 if (RAM_GB or 16) >= 24 else 8, "save_step": 500, "lr": 1e-4, "device": device, "fast": ds_settings(d)["fast"]}
     prev = latest_ckpt(work) if t.get("resume") else None
     if prev:
         args["continue"] = str(Path(prev).parent)
@@ -1903,6 +2188,8 @@ def train_worker(name, steps, device):
         return train_worker(name, steps, "cpu")
     else:
         t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
+    if p.returncode == 0 or t.get("stop"):
+        (d / "trained.json").write_text(json.dumps({"clips": len(items), "t": int(time.time())}))
     if latest_ckpt(work):
         try:
             export_model(name)

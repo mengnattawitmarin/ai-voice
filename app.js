@@ -1251,7 +1251,7 @@ async function openProc(){
     if (S.serverUrl) h += `<button class="btn alt sm" id="srvOff">ยกเลิกการเชื่อม Mac</button>`;
   }
   if (on){
-    h += `<h4>โมเดลบน Mac</h4>${models}<button class="btn alt sm" id="pDl" style="margin-top:8px">ดาวน์โหลดโมเดลทั้งหมดตอนนี้</button>`;
+    h += `<h4>โมเดลบน Mac</h4>${models}<button class="btn alt sm" id="pDl" style="margin-top:8px">ดาวน์โหลดโมเดลทั้งหมดตอนนี้</button><div class="row2" style="margin-top:8px"><button class="btn alt sm" id="pBak">📦 สำรองโมเดลที่เทรน</button><label class="btn alt sm" style="text-align:center">⬆️ กู้คืน<input type="file" id="pRes" accept=".zip" hidden></label></div>`;
     const small = (i.ram_gb || 16) < 14, gc = i.gpu_cores ? ` · GPU ${i.gpu_cores} คอร์` : '';
     const mEst = md => { const keep = S.macImg; S.macImg = md; const v = fmtDur(speedOf('img-mac').v / 1000); S.macImg = keep; return '~' + v + '/ภาพ'; };
     h += `<h4>โหมดสร้างภาพบน Mac${gc}</h4>
@@ -1286,6 +1286,8 @@ async function openProc(){
       if (r){ toast('เชื่อม Mac แล้ว ✓'); openProc(); } else m.innerHTML = '<span style="color:var(--err)">เชื่อมไม่ได้ — ตรวจว่าแอปบน Mac เปิดอยู่ และใช้ลิงก์ล่าสุด</span>';
     });
     el.querySelector('#srvOff')?.addEventListener('click', () => { S.serverUrl = ''; S.macToken = ''; save(); MAC.info = null; MAC.state = 'off'; renderVoice(); renderQuota(); openProc(); });
+    el.querySelector('#pBak')?.addEventListener('click', () => window.GMVoiceTrain?.backup());
+    el.querySelector('#pRes')?.addEventListener('change', e => { window.GMVoiceTrain?.restore(e.target.files[0]); e.target.value = ''; });
     el.querySelector('#pDl')?.addEventListener('click', async () => { try { await MAC.form('/api/models/download', {keys: 'tts,voice,klein,' + IMG_MODE_MODEL[curImgMode()]}); toast('เริ่มดาวน์โหลดบน Mac แล้ว'); setTimeout(openProc, 3000); } catch(e){ toast(e.message, true); } });
     el.querySelector('#macSave')?.addEventListener('change', e => { S.macSave = e.target.checked; save(); });
     el.querySelector('#macOpen')?.addEventListener('click', () => MAC.json('/api/open_folder'));
@@ -1496,9 +1498,11 @@ function openLoraTrainer(){
     <label class="lbl2">ชื่อที่จะแสดง</label><input id="lrLabel" value="${esc(cfg.label)}" placeholder="เช่น แก้วกาแฟร้านเรา" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
     <label class="lbl2">สอนเรื่องอะไร</label><div class="chips" id="lrKind">${LORA_KIND.map(k => `<button class="chip ${k[0] === cfg.kind ? 'on' : ''}" data-v="${k[0]}">${k[1]}</button>`).join('')}</div>
     <label class="lbl2">อธิบายสั้นๆ (ภาษาอังกฤษจะดีที่สุด)</label><input id="lrDesc" value="${esc(cfg.desc)}" placeholder="เช่น white ceramic coffee mug with a green leaf logo" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
-    <div class="row2" style="margin-top:12px"><label class="btn" style="flex:1;text-align:center">📁 เพิ่มภาพ<input type="file" id="lrIn" accept="image/*" multiple hidden></label></div>
+    <div class="row2" style="margin-top:12px"><label class="btn" style="flex:1;text-align:center">📁 เพิ่มภาพ<input type="file" id="lrIn" accept="image/*" multiple hidden></label><label class="btn alt" style="flex:1;text-align:center">🎬 จากวิดีโอ<input type="file" id="lrVid" accept="video/*" hidden></label></div>
+    <p class="hint">🎬 ถ่ายวิดีโอเดินวน/หมุนรอบสิ่งที่จะสอน 20–30 วินาที → ระบบเลือกเฟรมคมๆ หลายมุมให้เอง · ภาพซ้ำ/มืดจะถูกคัดออกอัตโนมัติ</p>
     <div id="lrImgs" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px"></div>
-    <label class="lbl2">ความละเอียดการเทรน</label><div class="chips" id="lrSteps">${[[800, 'เร็ว'], [1200, 'มาตรฐาน'], [2000, 'ละเอียด']].map(([v, n]) => `<button class="chip ${v === cfg.steps ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
+    <label class="lbl2">ความละเอียดการเทรน</label><div class="chips" id="lrSteps">${[[600, '⚡ เร็วมาก (512px)'], [1200, 'มาตรฐาน'], [2000, 'ละเอียด']].map(([v, n]) => `<button class="chip ${v === cfg.steps ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
+    <p class="hint">เร็วมาก ≈ เร็วกว่ามาตรฐาน 3–4 เท่า เหมาะกับสินค้า/ตัวละครรูปทรงไม่ซับซ้อน</p>
     <div id="lrTrain" style="margin-top:12px"></div>
     <p class="hint">ใบหน้าคน: ใช้เฉพาะภาพของคุณเองหรือคนที่อนุญาตแล้วเท่านั้น · ห้ามสอนโลโก้/ตัวละครของแบรนด์อื่น</p>`, el => {
     const api = (p, o) => MAC.call('/api/lora/' + cfg.id + p, o, 120000);
@@ -1518,22 +1522,31 @@ function openLoraTrainer(){
       el.querySelector('#lrTrain').innerHTML = (run ? `<div class="vt-prog"><div class="bar"><i style="width:${pct}%"></i></div></div><p class="hint">${esc(t.msg || '')}${t.eta ? ' · เหลือประมาณ ' + fmtDur(t.eta) : ''}</p><button class="btn alt sm" id="lrStop">หยุดเทรน</button>`
         : `${t?.state === 'error' ? `<p class="lim">${esc(t.msg)}</p>${t.tail ? `<details><summary class="hint">รายละเอียด</summary><pre style="white-space:pre-wrap;font-size:11px">${esc(t.tail.join('\n'))}</pre></details>` : ''}` : t ? `<p class="hint">${esc(t.msg || '')}</p>` : ''}
            <p class="hint">${s.images.length} ภาพ${s.images.length < 15 ? ' — แนะนำ 15 ภาพขึ้นไป (ขั้นต่ำ 6)' : ' ✓'}${s.ready ? ' · มีโมเดลแล้ว เลือกใช้ได้ในหน้าสร้างภาพ' : ''}</p>
+           ${s.previews?.length ? `<label class="lbl2">ภาพตัวอย่างจากโมเดล</label><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px">${s.previews.map(f => `<img data-pv="${f}" style="width:100%;border-radius:10px;background:#0006;aspect-ratio:1;object-fit:cover">`).join('')}</div>` : ''}
            <button class="btn" id="lrGo" style="width:100%" ${s.images.length >= 6 ? '' : 'disabled'}>🧠 ${s.ready ? 'เทรนใหม่' : 'เริ่มเทรน'} บน Mac</button>`);
+      el.querySelectorAll('img[data-pv]').forEach(async im => { try { im.src = URL.createObjectURL(await (await api('/preview/' + im.dataset.pv)).blob()); } catch(e){} });
       el.querySelector('#lrStop')?.addEventListener('click', async () => { await api('/stop', {method: 'POST'}); setTimeout(load, 1500); });
       el.querySelector('#lrGo')?.addEventListener('click', async () => {
         if (!cfg.label.trim()) return toast('ตั้งชื่อก่อน', true);
-        try { await MAC.form('/api/lora/' + cfg.id + '/train', {kind: cfg.kind, desc: cfg.desc, label: cfg.label, steps: cfg.steps}); toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); load(); } catch(e){ toast(e.message, true); }
+        try { await MAC.form('/api/lora/' + cfg.id + '/train', {kind: cfg.kind, desc: cfg.desc, label: cfg.label, steps: cfg.steps, fast: cfg.steps <= 600 ? 1 : 0}); toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); load(); } catch(e){ toast(e.message, true); }
       });
       clearTimeout(pollT);
       if (run) pollT = setTimeout(load, 6000);
       else if (t?.state === 'done'){ MAC.refresh(); LS.set('loraDraft', {}); }
     }
+    el.querySelector('#lrVid').onchange = async e => {
+      const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+      toast('กำลังส่งวิดีโอให้ Mac เลือกเฟรม…');
+      try { const r = await (await MAC.form('/api/lora/' + cfg.id + '/video', {video: f, n: 25}, 10 * 60e3)).json(); toast(`ได้ ${r.added} ภาพจาก ${r.frames} เฟรม${r.dup ? ` · ซ้ำ ${r.dup}` : ''}${r.dark ? ` · มืด ${r.dark}` : ''}`); }
+      catch(err){ toast(err.message, true); }
+      load();
+    };
     el.querySelector('#lrIn').onchange = async e => {
       const files = [...e.target.files]; if (!files.length) return;
       toast(`กำลังอัปโหลด ${files.length} ภาพ…`);
       for (let i = 0; i < files.length; i += 6){
         const fd = new FormData(); files.slice(i, i + 6).forEach(f => fd.append('files', f, f.name));
-        try { await api('/images', {method: 'POST', body: fd}); } catch(err){ toast(err.message, true); break; }
+        try { const r = await (await api('/images', {method: 'POST', body: fd})).json(); if (r.dup || r.dark) toast(`คัดออก: ซ้ำ ${r.dup} · มืด ${r.dark}`); } catch(err){ toast(err.message, true); break; }
       }
       e.target.value = ''; load();
     };

@@ -7,7 +7,7 @@ const fmt = s => s == null ? '?' : s < 60 ? Math.round(s) + ' วินาที
 
 /* ---------- shared: submit a job to the Mac and wait for it ---------- */
 async function macJob(path, body, onTick){
-  const r = body instanceof FormData ? await GM.MAC.call(path, { method: 'POST', body }, 120000) : await GM.MAC.json(path, body, 60000);
+  const r = body instanceof FormData ? await GM.MAC.call(path, { method: 'POST', body }, 30 * 60e3) : await GM.MAC.json(path, body, 60000);
   const { job } = await r.json();
   for (;;){
     await new Promise(res => setTimeout(res, 2500));
