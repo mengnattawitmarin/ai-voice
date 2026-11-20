@@ -5,7 +5,7 @@ on run
 	try
 		do shell script "xattr -dr com.apple.quarantine " & quoted form of appPath
 	end try
-	do shell script "echo '--- start' $(date) >> /tmp/genmedi-launcher.log; cd " & quoted form of res & " && (nohup ./python/bin/python3 genmedi/launcher.py >> /tmp/genmedi-launcher.log 2>&1 &); echo ok"
+	do shell script "echo '--- start' $(date) >> /tmp/genmedi-launcher.log; cd " & quoted form of res & " && (PYTHONDONTWRITEBYTECODE=1 nohup ./python/bin/python3 genmedi/launcher.py >> /tmp/genmedi-launcher.log 2>&1 &); echo ok"
 	-- check that it really started; if not, show the error so the user can send it
 	set serverUp to false
 	repeat 40 times

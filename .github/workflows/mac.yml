@@ -85,6 +85,11 @@ jobs:
         with: {name: smoke, path: "out\nlauncher.log\nsmoke-data/logs"}
       - name: DMG
         run: |
+          # the smoke test ran the bundled Python, which wrote __pycache__ into the app → that breaks the signature ("damaged") → clean + re-sign
+          APP="build/Gen Medi.app"
+          find "$APP" -name __pycache__ -type d -prune -exec rm -rf {} +
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           set -e
           mkdir -p dmg && cp -R "build/Gen Medi.app" dmg/ && ln -s /Applications dmg/Applications
           hdiutil create -volname "Gen Medi" -srcfolder dmg -ov -format UDZO GenMedi-mac.dmg
