@@ -110,15 +110,20 @@ class SetupHandler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        code = 200
         if self.path.startswith("/status"):
             body = json.dumps(STATE, ensure_ascii=False).encode()
             ctype = "application/json"
+        elif self.path.startswith("/api/"):
+            # still installing — the real server isn't up yet (the setup page and the phone poll /api/ping)
+            code, body, ctype = 503, json.dumps({"detail": "Gen Medi กำลังติดตั้งบน Mac — " + str(STATE.get("stage", ""))}, ensure_ascii=False).encode(), "application/json"
         else:
             body = SETUP_HTML.encode()
             ctype = "text/html; charset=utf-8"
-        self.send_response(200)
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
