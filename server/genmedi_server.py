@@ -2114,6 +2114,103 @@ print("GMSTAGE done", flush=True)
 """
 
 
+# held-out sentences (not in the recording list) — the supervisor makes each checkpoint read them, Whisper listens
+EVAL_SENTENCES = [
+    "พรุ่งนี้เช้าผมจะไปตลาดซื้อผักกับผลไม้",
+    "ราคาสินค้าชิ้นนี้ลดเหลือสามร้อยเก้าสิบเก้าบาท",
+    "ขอบคุณที่ติดตามนะครับ แล้วพบกันใหม่คลิปหน้า",
+    "น้องหมาตัวนี้ขี้เล่นและชอบวิ่งไล่ลูกบอล",
+    "ฝนตกหนักทั้งคืนจนน้ำท่วมถนนหน้าบ้าน",
+    "เขาเดินทางไปทำงานด้วยรถไฟฟ้าทุกวัน",
+    "ใครชอบกินเผ็ด ต้องลองเมนูนี้ให้ได้",
+    "เสื้อตัวใหม่สีเขียวใส่สบายมาก",
+    "คุณยายปลูกต้นมะม่วงไว้หลังบ้านหลายต้น",
+    "ห้องประชุมอยู่ชั้นสิบสอง เลี้ยวซ้ายจากลิฟต์",
+    "ไม่ว่าจะเหนื่อยแค่ไหน เราก็จะไม่ยอมแพ้",
+    "หนังเรื่องนี้สนุกจนลืมดูเวลา",
+]
+
+
+def eval_checkpoint(name, ck, sm, ref_emb):
+    """Score one checkpoint: intelligibility (1 − Whisper CER) and voice similarity (cosine of speaker embeddings)."""
+    import numpy as np
+    from TTS.utils.synthesizer import Synthesizer
+    d, work = train_paths(name)
+    out = work / "eval" / Path(ck).stem
+    out.mkdir(parents=True, exist_ok=True)
+    syn = Synthesizer(tts_checkpoint=ck, tts_config_path=str(Path(ck).parent / "config.json"), use_cuda=False)
+    files = {}
+    for i, t in enumerate(EVAL_SENTENCES):
+        wav = syn.tts(t, speaker_name=d.name, language_name="th-th")
+        f = out / f"{i}.wav"
+        f.write_bytes(wav_bytes(wav, syn.output_sample_rate))
+        files[str(i)] = str(f)
+    del syn
+    heard = run_tool_script("whisper", DSQC_CODE, {"model": WHISPER_MODEL, "files": files})
+    cers = {int(k): _cer(EVAL_SENTENCES[int(k)], v) for k, v in heard.items()}
+    emb = np.asarray(sm.compute_embedding_from_clip(list(files.values())), dtype=np.float32)
+    sim = float(np.dot(emb, ref_emb) / (np.linalg.norm(emb) * np.linalg.norm(ref_emb) + 1e-9))
+    cer = float(np.mean(list(cers.values()))) if cers else 1.0
+    worst = sorted(cers.items(), key=lambda x: -x[1])[:4]
+    return {"cer": round(cer, 3), "sim": round(sim, 3), "score": round((1 - min(cer, 1)) * 0.7 + max(sim, 0) * 0.3, 4),
+            "weak": [{"text": EVAL_SENTENCES[i], "heard": heard.get(str(i), ""), "cer": round(c, 2)} for i, c in worst if c > 0.05]}
+
+
+def train_supervisor(name, t):
+    """Watches the run: evaluates every new checkpoint, keeps the best one as the live voice, stops early when it stops improving."""
+    import glob
+    import numpy as np
+    from TTS.tts.utils.speakers import SpeakerManager
+    d, work = train_paths(name)
+    kt = Path(ensure_model("tts"))
+    sm = SpeakerManager(encoder_model_path=str(kt / "model_se.pth"), encoder_config_path=str(kt / "config_se.json"), use_cuda=False)
+    clips = sorted((d / "wavs").glob("*.wav"))
+    ref = np.asarray(sm.compute_embedding_from_clip([str(c) for c in random.sample(clips, min(20, len(clips)))]), dtype=np.float32)
+    seen = set()
+    t.setdefault("evals", [])
+    try:   # when continuing, the voice in use must only be replaced by something better
+        prev = (json.loads((MY_MODELS / d.name / "meta.json").read_text()).get("score") or {}).get("score", 0)
+    except Exception:  # noqa
+        prev = 0
+    while True:
+        alive = t.get("proc") is not None and t["proc"].poll() is None
+        cks = sorted(glob.glob(str(work / "run" / "**" / "checkpoint_*.pth"), recursive=True), key=os.path.getmtime)
+        for ck in cks:
+            if ck in seen:
+                continue
+            seen.add(ck)
+            time.sleep(5)   # let the trainer finish writing
+            step = int(re.search(r"checkpoint_(\d+)", ck).group(1))
+            try:
+                t["judge"] = f"AI กำลังให้คะแนนโมเดลขั้นที่ {step}…"
+                r = eval_checkpoint(name, ck, sm, ref)
+            except Exception as e:  # noqa
+                print("[supervisor]", e, flush=True)
+                t["judge"] = "ให้คะแนนไม่สำเร็จ: " + str(e)[:120]
+                continue
+            r["step"] = step
+            t["evals"].append(r)
+            best = max(t["evals"], key=lambda x: x["score"])
+            t["weak"] = r["weak"]
+            if best is r and r["score"] > prev:
+                t["best"] = step
+                try:
+                    export_model(name, ck, step, r)
+                except Exception as e:  # noqa
+                    print("[supervisor] export", e, flush=True)
+            t["judge"] = f"ขั้นที่ {step}: ชัด {round((1 - r['cer']) * 100)}% · เหมือนเสียงคุณ {round(r['sim'] * 100)}%" + (f" · ดีที่สุดคือขั้นที่ {t['best']}" if t.get("best") else " · ยังไม่ดีกว่าโมเดลเดิม")
+            # early stop: 4 evaluations in a row without beating the best
+            last = t["evals"][-4:]
+            if len(t["evals"]) >= 6 and all(x["score"] < best["score"] for x in last) and alive:
+                t["early"] = True
+                t["judge"] += " · คะแนนไม่ดีขึ้นแล้ว — หยุดเอง"
+                t["proc"].terminate()
+        if not alive:
+            break
+        time.sleep(30)
+    t["judging"] = False
+
+
 def train_paths(name):
     d = ds_dir(name)
     return d, DATA / "training" / d.name
@@ -2148,7 +2245,9 @@ def train_worker(name, steps, device):
     log = open(work / "train.log", "a", encoding="utf8")
     p = subprocess.Popen([sys.executable, str(work / "train.py"), str(work / "args.json")], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, env=env, cwd=str(work))
-    t.update(state="running", proc=p, device=device, clips=len(items), msg="เตรียมข้อมูล…", started=time.time())
+    t.update(state="running", proc=p, device=device, clips=len(items), msg="เตรียมข้อมูล…", started=time.time(), judging=True)
+    sup = threading.Thread(target=lambda: _safe(train_supervisor, name, t), daemon=True)
+    sup.start()
     try:   # keep the Mac awake while training runs
         subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:  # noqa
@@ -2177,8 +2276,11 @@ def train_worker(name, steps, device):
     p.wait()
     log.close()
     t["tail"] = tail[-12:]
+    sup.join(timeout=900)   # let the supervisor score the last checkpoint
     t.pop("proc", None)
-    if t.get("stop"):
+    if t.get("early"):
+        t.update(state="done", msg=f"AI หยุดเทรนเองเพราะคะแนนไม่ดีขึ้นแล้ว — ใช้ตัวที่ดีที่สุด (ขั้นที่ {t.get('best')}) 🎉")
+    elif t.get("stop"):
         t.update(state="stopped", msg="หยุดแล้ว — ใช้ checkpoint ล่าสุดได้")
     elif p.returncode == 0:
         t.update(state="done", msg="เทรนเสร็จแล้ว 🎉")
@@ -2190,16 +2292,16 @@ def train_worker(name, steps, device):
         t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
     if p.returncode == 0 or t.get("stop"):
         (d / "trained.json").write_text(json.dumps({"clips": len(items), "t": int(time.time())}))
-    if latest_ckpt(work):
+    if latest_ckpt(work) and not t.get("best"):
         try:
             export_model(name)
         except Exception as e:  # noqa
             print("[train] export", e, flush=True)
 
 
-def export_model(name):
+def export_model(name, ck=None, step=None, score=None):
     d, work = train_paths(name)
-    ck = latest_ckpt(work)
+    ck = ck or latest_ckpt(work)
     if not ck:
         raise HTTPException(400, "ยังไม่มี checkpoint — รอให้เทรนถึงขั้นที่ 500 ก่อน")
     out = MY_MODELS / d.name
@@ -2207,7 +2309,7 @@ def export_model(name):
     shutil.copy(ck, out / "model.pth")
     shutil.copy(Path(ck).parent / "config.json", out / "config.json")
     meta = {"name": d.name, "label": "🎓 เสียงไทยของฉัน" + ("" if d.name == "mine" else f" ({d.name})"), "ckpt": Path(ck).name,
-            "step": TRAIN.get(d.name, {}).get("step"), "t": int(time.time())}
+            "step": step or TRAIN.get(d.name, {}).get("step"), "t": int(time.time()), "score": score and {k: score[k] for k in ("cer", "sim", "score")}}
     (out / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
     _my.pop(d.name, None)
     return meta

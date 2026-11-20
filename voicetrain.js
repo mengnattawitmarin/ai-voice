@@ -235,14 +235,14 @@ function renderTrain(){
   const c = status?.count || 0, good = c - (status?.bad || 0), tr = status?.train, md = status?.model;
   const running = tr && (tr.state === 'running' || tr.state === 'starting');
   let h = '';
-  if (md) h += `<div class="item" style="display:block"><b>${GM.esc(md.label)}</b><br><small>โมเดลล่าสุด${md.step ? ' · ขั้นที่ ' + md.step : ''} · ${new Date(md.t * 1000).toLocaleString('th-TH')}</small>
+  if (md) h += `<div class="item" style="display:block"><b>${GM.esc(md.label)}</b><br><small>ใช้อยู่${md.step ? ' · ขั้นที่ ' + md.step : ''}${md.score ? ` · ชัด ${Math.round((1 - md.score.cer) * 100)}% · เหมือนเสียงคุณ ${Math.round(md.score.sim * 100)}%` : ''} · ${new Date(md.t * 1000).toLocaleString('th-TH')}</small>
       <textarea id="vtTry" rows="2" style="width:100%;margin-top:8px;padding:10px;border-radius:10px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">สวัสดีครับ นี่คือเสียงไทยที่ผมเทรนขึ้นมาเอง ฟังชัดไหมครับ</textarea>
       <div class="row2" style="margin-top:8px"><button class="btn sm" id="vtListen">▶ ฟังเสียงโมเดล</button><button class="btn alt sm" id="vtUse">ใช้เป็นเสียงพากย์</button></div></div>`;
   if (running){
     const pct = tr.total ? Math.min(100, (tr.step || 0) / tr.total * 100) : 0;
     h += `<div class="vt-prog" style="margin-top:10px"><div class="bar"><i style="width:${pct}%"></i></div></div>
       <p class="hint">${GM.esc(tr.msg || '')}${tr.device ? ' · ' + tr.device : ''}${tr.eta ? ' · เหลือประมาณ ' + fmtEta(tr.eta) : ''}${tr.loss ? ' · loss ' + tr.loss.toFixed(2) : ''}</p>
-      <p class="hint">เทรนอยู่เบื้องหลังบน Mac — ปิดแอปได้ (Mac จะไม่หลับเองระหว่างเทรน) แต่ห้ามปิด Terminal / ห้ามพับฝาจอ · ทุก 500 ขั้นจะบันทึกโมเดลไว้ กด “ใช้โมเดลล่าสุด” เพื่อลองฟังระหว่างทางได้</p>
+      <p class="hint">เทรนอยู่เบื้องหลังบน Mac — ปิดแอปได้ (Mac จะไม่หลับเองระหว่างเทรน) แต่ห้ามปิด Terminal / ห้ามพับฝาจอ · ทุก 500 ขั้น AI จะให้คะแนนและเปลี่ยนไปใช้ตัวที่ดีที่สุดให้เอง และหยุดเองเมื่อคะแนนไม่ดีขึ้น</p>
       <div class="row2"><button class="btn alt sm" id="vtExport">ใช้โมเดลล่าสุด (ลองฟัง)</button><button class="btn alt sm" id="vtStop">หยุดเทรน</button></div>`;
   } else {
     if (tr?.state === 'error') h += `<p class="lim">${GM.esc(tr.msg || '')}</p>${tr.tail ? `<details><summary class="hint">รายละเอียด</summary><pre style="white-space:pre-wrap;font-size:11px">${GM.esc(tr.tail.join('\n'))}</pre></details>` : ''}`;
@@ -253,7 +253,27 @@ function renderTrain(){
       <div class="row2" style="margin-top:10px"><button class="btn" id="vtStart" ${ok ? '' : 'disabled'}>🧠 เริ่มเทรน</button>${md ? '<button class="btn alt" id="vtResume">เทรนต่อจากเดิม</button>' : ''}</div>
       <p class="hint">แนะนำ: กด “ตรวจคุณภาพ” ก่อนเทรน · ยิ่งข้อมูลเยอะ/สะอาด เสียงยิ่งชัด · เทรนต่อเพิ่มได้ภายหลังเมื่ออัดเพิ่ม</p>`;
   }
+  // 🤖 supervisor: scores of every checkpoint + weak sentences
+  if (tr?.evals?.length || tr?.judge){
+    const ev = tr.evals || [], best = tr.best;
+    h += `<div class="item" style="display:block;margin-top:10px"><b>🤖 AI ผู้คุมการเทรน</b><br><small>${GM.esc(tr.judge || '')}</small>
+      ${ev.length ? `<div style="display:flex;gap:3px;align-items:flex-end;height:54px;margin-top:8px">${ev.map(e => `<div title="ขั้น ${e.step}: ชัด ${Math.round((1 - e.cer) * 100)}% · เหมือน ${Math.round(e.sim * 100)}%" style="flex:1;max-width:22px;height:${Math.max(6, e.score * 54)}px;border-radius:4px 4px 0 0;background:${e.step === best ? 'linear-gradient(#fbbf24,#f59e0b)' : 'linear-gradient(#22d3ee,#3b82f6)'}"></div>`).join('')}</div><small class="hint">แท่ง = คะแนนแต่ละ checkpoint · สีทอง = ตัวที่ใช้อยู่</small>` : ''}</div>`;
+  }
+  const weak = tr?.weak || [];
+  if (weak.length) h += `<div class="item" style="display:block;margin-top:8px"><b>🎯 จุดที่ยังพูดไม่ชัด</b>${weak.map(w => `<div style="margin-top:6px;font-size:14px">${GM.esc(w.text)}<br><small style="color:#f99">AI ฟังได้: “${GM.esc(w.heard)}”</small></div>`).join('')}
+      <button class="btn sm" id="vtWeak" style="width:100%;margin-top:8px">✨ แต่งประโยคฝึกจุดนี้ 30 ประโยค</button></div>`;
   box.innerHTML = h;
+  box.querySelector('#vtWeak')?.addEventListener('click', async e => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const r = await window.GMTools.macJob('/api/llm', {
+        system: 'คุณเป็นครูสอนออกเสียงภาษาไทย เขียนประโยคภาษาไทยที่ถูกต้องและเป็นธรรมชาติ',
+        prompt: `โมเดลเสียงยังออกเสียงประโยคเหล่านี้ไม่ชัด:\n${weak.map(w => '- ' + w.text).join('\n')}\nแต่งประโยคใหม่ 30 ประโยคที่ใช้คำ พยางค์ และวรรณยุกต์แบบเดียวกับประโยคข้างบนบ่อยๆ เพื่อให้คนอ่านบันทึกเสียงไปฝึกโมเดล\nกติกา: บรรทัดละ 1 ประโยค ไม่ใส่เลขลำดับ ไม่ใส่เครื่องหมายคำพูด ยาว 6–20 คำ เขียนตัวเลขเป็นคำอ่าน ไม่ใช้ภาษาอังกฤษ`,
+        max_tokens: 1500}, j => { b.textContent = j.state === 'queued' ? 'รอคิวบน Mac…' : 'AI กำลังแต่ง…'; });
+      const lines = ((await r.json()).text || '').split('\n').map(l => norm(l.replace(/^\s*[\d๐-๙]+[.)\-:]\s*/, '').replace(/^[-•*"“”]+|["“”]+$/g, ''))).filter(l => l.length >= 8 && l.length <= 140 && !/[a-zA-Z]{3,}/.test(l));
+      st.custom = [...lines, ...st.custom]; saveSt(); GM.toast(`เพิ่ม ${lines.length} ประโยคไว้หน้าคิวแล้ว — อัดได้เลย`); render(); $('#vtSent')?.scrollIntoView({behavior: 'smooth', block: 'center'});
+    } catch(err){ GM.toast(err.message, true); b.disabled = false; b.textContent = 'ลองอีกครั้ง'; }
+  });
   box.querySelectorAll('#vtSteps .chip').forEach(b => b.onclick = () => { st.steps = +b.dataset.v; saveSt(); box.querySelectorAll('#vtSteps .chip').forEach(x => x.classList.toggle('on', x === b)); });
   const start = async resume => {
     try { await GM.MAC.form('/api/ds/' + DS + '/train', {steps: st.steps || 8000, resume: resume ? 1 : 0}); GM.toast('เริ่มเทรนบน Mac แล้ว'); await render(); }
