@@ -965,17 +965,32 @@ def gen(req):
         kw.pop("denoise", None); kw.pop("normalize", None)
         return model.generate(**kw)
 
+import numpy as np
+
+def bad(w):
+    w = np.asarray(w, dtype=np.float32).reshape(-1)
+    return w.size == 0 or not np.isfinite(w).all() or float(np.sqrt(np.mean(w ** 2))) < 1e-4
+
 for line in sys.stdin:
     req = json.loads(line)
     try:
         try:
             wav = gen(req)
+            if bad(wav):
+                raise RuntimeError("silent/NaN audio")
         except Exception as e:
             if dev != "mps":
                 raise
+            # some ops misbehave on Apple GPU (NaN → silence) — redo on CPU and stay there
             print("mps generate failed, switching to cpu:", e, file=sys.stderr, flush=True)
             dev = "cpu"; model = load("cpu"); wav = gen(req)
-        sf.write(req["out"], wav, model.tts_model.sample_rate)
+        w = np.nan_to_num(np.asarray(wav, dtype=np.float32).reshape(-1))
+        if bad(w):
+            raise RuntimeError("VoxCPM2 สร้างเสียงเงียบ — ลองข้อความสั้นลงหรือเสียงอื่น")
+        peak = float(np.max(np.abs(w)))
+        if peak > 0:
+            w = w * min(1.0, 0.95 / peak) if peak > 0.95 else w
+        sf.write(req["out"], w, model.tts_model.sample_rate, subtype="PCM_16")
         print(json.dumps({"ok": True, "device": dev}), flush=True)
     except Exception as e:
         print(json.dumps({"ok": False, "error": (type(e).__name__ + ": " + str(e))[:400], "trace": traceback.format_exc()[-1200:]}), flush=True)

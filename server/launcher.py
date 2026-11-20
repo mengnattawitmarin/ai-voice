@@ -30,6 +30,8 @@ DATA.mkdir(parents=True, exist_ok=True)
 LOG.mkdir(parents=True, exist_ok=True)
 
 STATE = {"stage": "starting", "pct": 0, "log": [], "error": None, "ready": False}
+SERVER = HERE / "genmedi_server.py"
+UPD = DATA / "app-latest"        # newest server + web app from GitHub (so the .app updates itself on every launch)
 
 
 def log(msg):
@@ -167,7 +169,7 @@ def start_server():
         "TOKENIZERS_PARALLELISM": "false",
     })
     out = open(LOG / "server.log", "a")
-    return subprocess.Popen([str(venv_py()), str(HERE / "genmedi_server.py")], env=env, stdout=out, stderr=subprocess.STDOUT, cwd=str(DATA))
+    return subprocess.Popen([str(venv_py()), str(SERVER)], env=env, stdout=out, stderr=subprocess.STDOUT, cwd=str(DATA))
 
 
 def wait_port(p, sec=180):
@@ -179,10 +181,45 @@ def wait_port(p, sec=180):
     return False
 
 
+def self_update():
+    """Fetch the latest Gen Medi (server + web app) from GitHub; keep using the copy inside the app if offline."""
+    global SERVER, REQ, WEB
+    if not os.environ.get("GENMEDI_NO_UPDATE"):
+        import shutil
+        import zipfile
+        zp, tmp = DATA / "app-latest.zip", DATA / "app-latest.tmp"
+        try:
+            r = subprocess.run(["curl", "-fsSL", "--max-time", "60", "-o", str(zp),
+                                "https://codeload.github.com/mengnattawitmarin/ai-voice/zip/refs/heads/main"], capture_output=True, timeout=90)
+            if r.returncode == 0:
+                shutil.rmtree(tmp, ignore_errors=True)
+                with zipfile.ZipFile(zp) as z:
+                    for n in z.namelist():
+                        rel = n.split("/", 1)[1] if "/" in n else ""
+                        if not rel or n.endswith("/") or rel.split("/")[0] in ("android", "mac", ".github", "tools"):
+                            continue
+                        dst = tmp / rel
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        dst.write_bytes(z.read(n))
+                if (tmp / "index.html").exists() and (tmp / "server" / "genmedi_server.py").exists():
+                    shutil.rmtree(UPD, ignore_errors=True)
+                    tmp.rename(UPD)
+                    log("อัปเดตเป็นเวอร์ชันล่าสุดแล้ว")
+            else:
+                log("ข้ามการอัปเดต (ออฟไลน์?)")
+        except Exception as e:  # noqa
+            log("ข้ามการอัปเดต: " + str(e))
+        finally:
+            zp.unlink(missing_ok=True)
+    if (UPD / "index.html").exists() and (UPD / "server" / "genmedi_server.py").exists():
+        SERVER, REQ, WEB = UPD / "server" / "genmedi_server.py", UPD / "server" / "requirements-mac.txt", UPD
+
+
 def main():
     if port_busy(PORT):  # already running → just show it
         webbrowser.open(f"http://localhost:{PORT}/")
         return
+    self_update()
     setup = None
     if not ready():
         setup = ThreadingHTTPServer(("127.0.0.1", PORT), SetupHandler)
