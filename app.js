@@ -1422,6 +1422,16 @@ const IMG_STYLES = [
   ['anime','อนิเมะ','anime style illustration, vibrant colors, detailed'], ['3d','3D การ์ตูน','cute 3D cartoon render, soft lighting, octane'],
   ['water','สีน้ำ','watercolor painting, soft pastel colors, paper texture'], ['cyber','ไซเบอร์พังก์','cyberpunk, neon lights, cinematic, night city'],
   ['thai','ลายไทย','traditional Thai art style, intricate gold Thai patterns, temple mural'], ['logo','โลโก้/ไอคอน','minimal flat vector logo, clean solid background, simple shapes'],
+  ['cine','ภาพยนตร์','cinematic film still, anamorphic lens, dramatic lighting, shallow depth of field, color graded, 35mm film grain'],
+  ['edit','แฟชั่นนิตยสาร','high-end editorial photography, fashion magazine, soft studio light, elegant composition'],
+  ['oil','สีน้ำมัน','oil painting on canvas, visible brush strokes, rich colors, classical composition'],
+  ['ink','หมึกจีน/พู่กัน','ink wash painting, expressive brush strokes, negative space, minimalist'],
+  ['poster','โปสเตอร์มินิมอล','minimalist graphic poster, bold shapes, limited color palette, strong composition, swiss design'],
+  ['iso','3D ไอโซเมตริก','isometric 3D diorama, miniature, soft shadows, clean colors, tilt-shift'],
+  ['film','ฟิล์มเก่า','analog film photography, Kodak Portra 400, natural grain, nostalgic warm tones'],
+  ['neon','นีออน/ซินธ์เวฟ','synthwave, neon glow, retro-futuristic, purple and pink sunset gradient'],
+  ['clay','ดินปั้น','claymation style, handmade clay figures, soft studio lighting, playful'],
+  ['comic','การ์ตูนคอมิก','comic book illustration, bold ink lines, halftone shading, dynamic composition'],
 ];
 const RATIOS = [['1:1',1024,1024],['9:16',768,1344],['16:9',1344,768],['4:5',896,1120]];
 function chips(box, opts, cur, onPick){
@@ -1436,8 +1446,9 @@ $('#imgPrompt').oninput = e => LS.set('imgPrompt', e.target.value);
 $('#btnImgFromText').onclick = () => { const t = ta.value.trim(); if (!t) return toast('หน้าแปลงเสียงยังไม่มีข้อความ'); $('#imgPrompt').value = t.slice(0, 600); LS.set('imgPrompt', t.slice(0, 600)); toast('นำข้อความมาใช้แล้ว'); };
 function imgPrompt(prompt){ const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2]; return prompt + (st ? ', ' + st : ''); }
 /* ✨ prompt helper: Qwen on the Mac rewrites a (Thai) idea into a detailed English prompt */
-function enhKey(p){ return S.imgStyle + '|' + (S.imgLora || '') + '|' + p.trim(); }
+function enhKey(p){ return S.imgStyle + '|' + (S.imgArt || '') + '|' + (S.imgLora || '') + '|' + p.trim(); }
 $('#imgEnhOn').checked = !!S.imgEnhance;
+chips($('#imgArt'), [['', '🎯 ตรงตามสั่ง'], ['bold', '🎨 ศิลป์จัดเต็ม']], S.imgArt || '', v => { S.imgArt = v; });
 $('#imgEnhBox').hidden = !S.imgEnhance;
 $('#imgEnhOn').onchange = e => { S.imgEnhance = e.target.checked; save(); $('#imgEnhBox').hidden = !S.imgEnhance; };
 $('#imgEnh').oninput = () => { $('#imgEnh').dataset.edited = '1'; };
@@ -1447,8 +1458,13 @@ async function enhancePrompt(p, force){
   if (!force && box.dataset.key === key && box.value.trim()) return box.value.trim();
   const st = IMG_STYLES.find(s => s[0] === S.imgStyle)?.[2] || '';
   const r = await window.GMTools.macJob('/api/llm', {
-    system: 'You write prompts for a photorealistic text-to-image model. Reply with ONE English prompt only, no quotes, no explanations.',
-    prompt: `Rewrite this idea as a vivid, specific English image prompt (40-70 words): subject and action, setting, lighting, camera angle and lens, mood, composition, important details. Keep every element the user asked for and add nothing that contradicts it. Do not ask for any written text, letters or logos in the image.${st ? ' Visual style: ' + st + '.' : ''}\nIdea: ${p}`,
+    system: S.imgArt === 'bold'
+      ? 'You are an award-winning art director and concept artist writing prompts for a text-to-image model. Reply with ONE English prompt only, no quotes, no explanations.'
+      : 'You write prompts for a text-to-image model. Reply with ONE English prompt only, no quotes, no explanations.',
+    prompt: (S.imgArt === 'bold'
+      ? `Turn this idea into a striking, artistic image prompt (50-80 words). Make one bold creative choice (an unexpected angle, a memorable light source, a strong color palette, or symbolic framing) while keeping every element the user asked for. Describe: the subject and what it is doing, the setting, the composition (rule of thirds, leading lines, foreground/background layers, negative space), the light (time of day, direction, quality), a specific color palette, the mood, and the medium or camera and lens. No written text, letters or logos in the image.`
+      : `Rewrite this idea as a vivid, specific English image prompt (40-70 words): subject and action, setting, lighting, camera angle and lens, mood, composition, important details. Keep every element the user asked for and add nothing that contradicts it. Do not ask for any written text, letters or logos in the image.`)
+      + `${st ? ' Visual style: ' + st + '.' : ''}\nIdea: ${p}`,
     max_tokens: 220}, j => { $('#imgStatus').textContent = j.state === 'queued' ? 'รอคิว AI บน Mac…' : '✨ AI กำลังแต่งคำสั่ง… (ครั้งแรกโหลดโมเดล ~4GB)'; });
   const t = ((await r.json()).text || '').replace(/^["'\s]+|["'\s]+$/g, '').split('\n').filter(Boolean)[0] || '';
   if (!t) throw new Error('AI ไม่ตอบ');
@@ -1516,22 +1532,24 @@ function openLoraTrainer(){
   const saveD = () => LS.set('loraDraft', cfg);
   let pollT = null;
   openSheet(sheetHead('🎓 สอนโมเดลด้วยภาพของฉัน') + `
-    <p class="hint" style="margin-top:0">อัปโหลดภาพสิ่งเดียวกัน 15–40 ภาพ (หลายมุม หลายแสง หลายพื้นหลัง) → Mac เทรน LoRA บน FLUX.2 Klein 4B → วาดสิ่งนั้นได้ตรงทุกครั้ง · ใช้หารายได้ได้ (ภาพของคุณ + Apache-2.0)</p>
+    <p class="hint" style="margin-top:0">อัปโหลดภาพสิ่งเดียวกัน 15–40 ภาพ (หลายมุม หลายแสง หลายพื้นหลัง) → Mac เทรน LoRA บน Z-Image → วาดสิ่งนั้นได้ตรงทุกครั้ง · ใช้หารายได้ได้ (ภาพของคุณ + Apache-2.0)</p>
     <label class="lbl2">ชื่อที่จะแสดง</label><input id="lrLabel" value="${esc(cfg.label)}" placeholder="เช่น แก้วกาแฟร้านเรา" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
     <label class="lbl2">สอนเรื่องอะไร</label><div class="chips" id="lrKind">${LORA_KIND.map(k => `<button class="chip ${k[0] === cfg.kind ? 'on' : ''}" data-v="${k[0]}">${k[1]}</button>`).join('')}</div>
     <label class="lbl2">อธิบายสั้นๆ (ภาษาอังกฤษจะดีที่สุด)</label><input id="lrDesc" value="${esc(cfg.desc)}" placeholder="เช่น white ceramic coffee mug with a green leaf logo" style="width:100%;padding:12px;border-radius:12px;background:#0b1030;color:inherit;border:1px solid #fff2;font:inherit">
     <div class="row2" style="margin-top:12px"><label class="btn" style="flex:1;text-align:center">📁 เพิ่มภาพ<input type="file" id="lrIn" accept="image/*" multiple hidden></label><label class="btn alt" style="flex:1;text-align:center">🎬 จากวิดีโอ<input type="file" id="lrVid" accept="video/*" hidden></label></div>
     <p class="hint">🎬 ถ่ายวิดีโอเดินวน/หมุนรอบสิ่งที่จะสอน 20–30 วินาที → ระบบเลือกเฟรมคมๆ หลายมุมให้เอง · ภาพซ้ำ/มืดจะถูกคัดออกอัตโนมัติ</p>
     <div id="lrImgs" style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px"></div>
-    <label class="lbl2">ความละเอียดการเทรน</label><div class="chips" id="lrSteps">${[[600, '⚡ เร็วมาก (512px)'], [1200, 'มาตรฐาน'], [2000, 'ละเอียด']].map(([v, n]) => `<button class="chip ${v === cfg.steps ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
-    <p class="hint">เร็วมาก ≈ เร็วกว่ามาตรฐาน 3–4 เท่า เหมาะกับสินค้า/ตัวละครรูปทรงไม่ซับซ้อน</p>
+    <label class="lbl2">ความละเอียดการเทรน (Z-Image — โมเดลเดียวกับที่ใช้วาดปกติ)</label><div class="chips" id="lrPreset">${[['fast', '⚡ เร็ว'], ['balanced', 'มาตรฐาน'], ['quality', 'ละเอียด']].map(([v, n]) => `<button class="chip ${v === (cfg.preset || 'balanced') ? 'on' : ''}" data-v="${v}">${n}</button>`).join('')}</div>
+    <p class="hint">ใช้ค่าสำเร็จรูปของ mflux-lora สำหรับ Mac · ต้องใช้ RAM 32GB ขึ้นไป</p>
+    <label class="switch" style="margin-top:8px"><span>ขั้นสูง: เทรนบน FLUX.2 Klein 4B แทน<br><small style="color:var(--mut)">สำหรับ LoRA ที่ใช้คู่กับ ✏️ แก้ภาพ · ภาพไม่ใช่สไตล์ Z-Image</small></span><input type="checkbox" id="lrKlein" ${cfg.engine === 'klein' ? 'checked' : ''}></label>
     <div id="lrTrain" style="margin-top:12px"></div>
     <p class="hint">ใบหน้าคน: ใช้เฉพาะภาพของคุณเองหรือคนที่อนุญาตแล้วเท่านั้น · ห้ามสอนโลโก้/ตัวละครของแบรนด์อื่น</p>`, el => {
     const api = (p, o) => MAC.call('/api/lora/' + cfg.id + p, o, 120000);
     el.querySelector('#lrLabel').oninput = e => { cfg.label = e.target.value; saveD(); };
     el.querySelector('#lrDesc').oninput = e => { cfg.desc = e.target.value; saveD(); };
     el.querySelectorAll('#lrKind .chip').forEach(b => b.onclick = () => { cfg.kind = b.dataset.v; saveD(); el.querySelectorAll('#lrKind .chip').forEach(x => x.classList.toggle('on', x === b)); });
-    el.querySelectorAll('#lrSteps .chip').forEach(b => b.onclick = () => { cfg.steps = +b.dataset.v; saveD(); el.querySelectorAll('#lrSteps .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    el.querySelectorAll('#lrPreset .chip').forEach(b => b.onclick = () => { cfg.preset = b.dataset.v; saveD(); el.querySelectorAll('#lrPreset .chip').forEach(x => x.classList.toggle('on', x === b)); });
+    el.querySelector('#lrKlein').onchange = e => { cfg.engine = e.target.checked ? 'klein' : 'zimage'; saveD(); };
     async function load(){
       if (!document.body.contains(el.querySelector('#lrImgs'))) return;
       let s; try { s = await (await api('')).json(); } catch(e){ el.querySelector('#lrTrain').innerHTML = `<p class="lim">${esc(e.message)}</p>`; return; }
@@ -1550,7 +1568,7 @@ function openLoraTrainer(){
       el.querySelector('#lrStop')?.addEventListener('click', async () => { await api('/stop', {method: 'POST'}); setTimeout(load, 1500); });
       el.querySelector('#lrGo')?.addEventListener('click', async () => {
         if (!cfg.label.trim()) return toast('ตั้งชื่อก่อน', true);
-        try { await MAC.form('/api/lora/' + cfg.id + '/train', {kind: cfg.kind, desc: cfg.desc, label: cfg.label, steps: cfg.steps, fast: cfg.steps <= 600 ? 1 : 0}); toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); load(); } catch(e){ toast(e.message, true); }
+        try { await MAC.form('/api/lora/' + cfg.id + '/train', {kind: cfg.kind, desc: cfg.desc, label: cfg.label, engine: cfg.engine || 'zimage', preset: cfg.preset || 'balanced', steps: ({fast: 600, balanced: 1200, quality: 2000})[cfg.preset || 'balanced'], fast: cfg.preset === 'fast' ? 1 : 0}); toast('เริ่มเทรนบน Mac แล้ว — ปิดหน้านี้ได้'); load(); } catch(e){ toast(e.message, true); }
       });
       clearTimeout(pollT);
       if (run) pollT = setTimeout(load, 6000);

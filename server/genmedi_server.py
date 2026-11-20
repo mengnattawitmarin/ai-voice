@@ -409,10 +409,121 @@ def mflux_cli(cmd, args, timeout=1800):
         raise RuntimeError(("RAM ไม่พอ — " if r.returncode in (-9, 137) else "") + "สร้างภาพไม่สำเร็จ: " + tail[-300:])
 
 
-def gen_zimage(prompt, W, H, seed, steps):
+ZIMG_CODE = r"""
+import sys, json, traceback
+path = sys.argv[1]
+from mflux.models.z_image import ZImageTurbo
+
+def make(lora, scale):
+    kw = {}
+    if lora:
+        kw.update(lora_paths=[lora], lora_scales=[scale])
+    for extra in ({"model_path": path}, {"local_path": path}, {"model_path": path, "quantize": 4}):
+        try:
+            return ZImageTurbo(**extra, **kw)
+        except TypeError:
+            continue
+    raise RuntimeError("ZImageTurbo: cannot load local model")
+
+model, cur = None, None
+print(json.dumps({"ready": True}), flush=True)
+for line in sys.stdin:
+    r = json.loads(line)
+    try:
+        key = (r.get("lora"), r.get("scale", 1.0))
+        if model is None or key != cur:
+            model = None
+            model = make(*key)
+            cur = key
+        img = model.generate_image(prompt=r["prompt"], seed=r["seed"], num_inference_steps=r["steps"], width=r["w"], height=r["h"])
+        img.save(r["out"])
+        print(json.dumps({"ok": True}), flush=True)
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": (type(e).__name__ + ": " + str(e))[:300], "trace": traceback.format_exc()[-800:]}), flush=True)
+"""
+
+
+class ZImageWorker:
+    """Z-Image Turbo stays loaded between pictures (the CLI reloaded ~10 GB every image). Falls back to the CLI if the Python API differs."""
+    def __init__(self):
+        self.p, self.lock, self.last, self.broken = None, threading.Lock(), 0, False
+        threading.Thread(target=self._idle, daemon=True).start()
+
+    def _line(self, timeout):
+        end = time.time() + timeout
+        while time.time() < end:
+            ln = self.p.stdout.readline()
+            if not ln:
+                raise RuntimeError("worker exited")
+            if ln.strip().startswith("{"):
+                try:
+                    return json.loads(ln)
+                except Exception:  # noqa
+                    pass
+        raise RuntimeError("worker timeout")
+
+    def gen(self, prompt, W, H, seed, steps, lora=None, scale=1.0):
+        if self.broken:
+            return None
+        with self.lock:
+            try:
+                if not self.p or self.p.poll() is not None:
+                    py = ensure_tool("img")
+                    (DATA / "zimage_worker.py").write_text(ZIMG_CODE)
+                    (DATA / "logs").mkdir(exist_ok=True)
+                    self.p = subprocess.Popen([str(py), str(DATA / "zimage_worker.py"), ensure_model("zimage")], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                              stderr=open(DATA / "logs" / "zimage.log", "a"), text=True,
+                                              env=dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1"))
+                    self._line(300)
+                out = Path(tempfile.mkdtemp(prefix="gm-img-")) / "out.png"
+                self.p.stdin.write(json.dumps({"prompt": prompt, "w": W, "h": H, "seed": int(seed), "steps": int(steps), "lora": lora, "scale": scale, "out": str(out)}) + "\n")
+                self.p.stdin.flush()
+                r = self._line(1200)
+                self.last = time.time()
+                if r.get("ok"):
+                    from PIL import Image
+                    return Image.open(out)
+                print("[zimage worker]", r.get("error"), r.get("trace"), flush=True)
+                if "cannot load local model" in r.get("error", "") or "TypeError" in r.get("error", "") or "AttributeError" in r.get("error", ""):
+                    self.broken = True   # API mismatch → CLI from now on
+                    self.p.terminate()
+                    self.p = None
+                    return None
+                raise RuntimeError("สร้างภาพไม่สำเร็จ: " + r.get("error", ""))
+            except RuntimeError as e:
+                if "สร้างภาพไม่สำเร็จ" in str(e):
+                    raise
+                print("[zimage worker] fallback to CLI:", e, flush=True)
+                try:
+                    self.p and self.p.terminate()
+                except Exception:  # noqa
+                    pass
+                self.p = None
+                return None
+
+    def stop(self):
+        if self.p and self.p.poll() is None:
+            self.p.terminate()
+        self.p = None
+
+    def _idle(self):
+        while True:
+            time.sleep(60)
+            if self.p and self.p.poll() is None and time.time() - self.last > 900 and not self.lock.locked():
+                self.stop()
+
+
+ZIMG = ZImageWorker()
+
+
+def gen_zimage(prompt, W, H, seed, steps, lora=None, scale=1.0):
+    img = ZIMG.gen(prompt, W, H, seed, steps, lora, scale)
+    if img is not None:
+        return img
     path = ensure_model("zimage")
     out = Path(tempfile.mkdtemp(prefix="gm-img-")) / "out.png"
-    mflux_cli("mflux-generate-z-image-turbo", ["--model", path, "--base-model", "z-image-turbo", "--prompt", prompt,
+    extra = ["--lora-paths", lora, "--lora-scales", str(scale)] if lora else []
+    mflux_cli("mflux-generate-z-image-turbo", ["--model", path, "--base-model", "z-image-turbo", "--prompt", prompt, *extra,
               "--width", str(W), "--height", str(H), "--seed", str(seed), "--steps", str(steps), "--output", str(out)])
     from PIL import Image
     return Image.open(out)
@@ -1259,14 +1370,20 @@ async def txt2img(req: Request):
         mode, engine = "fast", "vega"
     lora = Path(j.get("lora") or "").name
     if lora and (LORAS / f"{lora}.safetensors").exists():
-        model_guard("klein")
+        model_guard("zimage" if json.loads((LORAS / f"{lora}.json").read_text()).get("engine") == "zimage" else "klein")
         t0 = time.time()
+
+        lmeta = json.loads((LORAS / f"{lora}.json").read_text())
 
         def run_lora():
             sd = int(j.get("seed") or random.randint(1, 2**31 - 2))
             W, H = fit_size(j.get("width"), j.get("height"), 1024 if (RAM_GB or 16) >= 16 else 768)
             b = io.BytesIO()
-            gen_klein_lora(prompt, W, H, sd, lora, float(j.get("lora_scale") or 1.0)).save(b, format="PNG")
+            if lmeta.get("engine") == "zimage":
+                p_ = prompt if lmeta["trigger"] in prompt else f"{lmeta['caption']}, {prompt}"
+                gen_zimage(p_, W, H, sd, 9, str(LORAS / f"{lora}.safetensors"), float(j.get("lora_scale") or 1.0)).save(b, format="PNG")
+            else:
+                gen_klein_lora(prompt, W, H, sd, lora, float(j.get("lora_scale") or 1.0)).save(b, format="PNG")
             return b.getvalue(), sd
         png, seed = await run_in_threadpool(busy, run_lora)
         return Response(png, media_type="image/png", headers={"X-Seed": str(seed), "X-Ms": str(round((time.time() - t0) * 1000))})
@@ -1711,6 +1828,106 @@ def lora_image_get(name: str, fn: str):
     return FileResponse(lora_dir(name) / "images" / Path(fn).name, media_type="image/png")
 
 
+def lora_train_worker_zimage(name, kind, desc, label, preset):
+    """Main path: LoRA on Z-Image Turbo with mflux-lora (MIT, Apple-Silicon presets) → used by the normal image engine."""
+    d = lora_dir(name)
+    t = LORA_TRAIN[d.name]
+    imgs = sorted((d / "images").glob("*.png"))
+    trig = "gm" + d.name.replace("-", "")
+    cap = LORA_KINDS.get(kind, LORA_KINDS["product"]).format(t=trig) + (", " + desc if desc else "")
+    data = d / "data"
+    shutil.rmtree(data, ignore_errors=True)
+    data.mkdir()
+    for p in imgs:
+        shutil.copy(p, data / p.name)
+        (data / (p.stem + ".txt")).write_text(cap)
+    out = d / "train-z"
+    shutil.rmtree(out, ignore_errors=True)
+    meta = {"name": d.name, "label": label or d.name, "trigger": trig, "kind": kind, "caption": cap, "images": len(imgs), "engine": "zimage"}
+    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False))
+    py = ensure_tool("img")
+    t["msg"] = "ติดตั้งตัวเทรน mflux-lora…"
+    r = subprocess.run([str(py), "-m", "pip", "install", "-q", "mflux-lora"], capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("ติดตั้ง mflux-lora ไม่สำเร็จ: " + r.stderr[-300:])
+    exe = py.parent / "mflux-lora"
+    ZIMG.stop()   # free memory for training
+    cmd = [str(exe), "train", str(data), "--model", "z-image-turbo", "--preset", preset, "--trigger", trig, "--output", str(out), "--weights", "q8"]
+    if (RAM_GB or 16) < 48:
+        cmd.append("--low-ram")
+    env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", str(DATA / "hf")), PYTHONUNBUFFERED="1")
+    t.update(state="running", msg="กำลังเตรียม… (ครั้งแรกดาวน์โหลดโมเดล Z-Image สำหรับเทรนหลาย GB)", started=time.time())
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(d))
+    t["proc"] = p
+    try:
+        subprocess.Popen(["caffeinate", "-i", "-w", str(p.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:  # noqa
+        pass
+    log = open(d / "train.log", "ab")
+    buf, tail = b"", []
+    while True:
+        ch = p.stdout.read(1)
+        if not ch:
+            break
+        log.write(ch)
+        if ch in (b"\r", b"\n"):
+            line = buf.decode(errors="ignore").strip()
+            buf = b""
+            if not line:
+                continue
+            tail = (tail + [line])[-30:]
+            mm = re.search(r"(\d+)\s*/\s*(\d+)\s*\[", line) or re.search(r"[Ss]tep\D{0,3}(\d+)\s*/\s*(\d+)", line)
+            if mm and int(mm.group(2)) > 10:
+                t["step"], t["total"] = int(mm.group(1)), int(mm.group(2))
+                el = time.time() - t["started"]
+                if t["step"] > 3:
+                    t["eta"] = round(el / t["step"] * (t["total"] - t["step"]))
+                t["msg"] = f"กำลังเทรน {t['step']}/{t['total']}"
+            elif "ownload" in line or "Fetching" in line:
+                t["msg"] = "กำลังดาวน์โหลดโมเดล… " + line[-60:]
+        else:
+            buf += ch
+    p.wait()
+    log.close()
+    t.pop("proc", None)
+    t["tail"] = tail[-10:]
+    ad = out / "adapter.safetensors"
+    if not ad.exists():   # stopped early → newest checkpoint zip
+        zips = sorted(out.glob("train*/checkpoints/*.zip"), key=os.path.getmtime)
+        if zips:
+            import zipfile
+            with zipfile.ZipFile(zips[-1]) as z:
+                st = [n for n in z.namelist() if n.endswith(".safetensors")]
+                if st:
+                    ad.write_bytes(z.read(next((n for n in st if "adapter" in n.lower()), st[0])))
+    ok = ad.exists()
+    if ok:
+        LORAS.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ad, LORAS / f"{d.name}.safetensors")
+        meta["t"] = int(time.time())
+        (LORAS / f"{d.name}.json").write_text(json.dumps(meta, ensure_ascii=False))
+        t["msg"] = "เทรนเสร็จ — กำลังวาดภาพตัวอย่าง…"
+        prev = d / "previews"
+        shutil.rmtree(prev, ignore_errors=True)
+        prev.mkdir()
+        scenes = {"product": ["on a wooden table in a bright cafe, soft morning light", "studio product shot on a clean white background"],
+                  "character": ["waving hello in a sunny park", "sitting on a stack of books, cozy room"],
+                  "person": ["portrait in a city street at golden hour", "smiling, sitting in a modern office"],
+                  "style": ["a quiet Thai temple at sunset", "a busy night market"]}.get(kind, ["on a table", "outdoors"])
+        for i, sc in enumerate(scenes):
+            try:
+                with LOCK:
+                    gen_zimage(f"{cap}, {sc}", 768, 768, 100 + i, 9, str(LORAS / f"{d.name}.safetensors")).save(prev / f"p{i + 1}.png")
+            except Exception as e:  # noqa
+                print("[lora] preview", e, flush=True)
+    if t.get("stop"):
+        t.update(state="stopped", msg="หยุดแล้ว" + (" — ใช้ผลล่าสุดได้" if ok else ""))
+    elif ok:
+        t.update(state="done", msg="เทรนเสร็จแล้ว 🎉 เลือกใช้ได้ในหน้าสร้างภาพ")
+    else:
+        t.update(state="error", msg="เทรนไม่สำเร็จ: " + " | ".join(tail[-3:])[-300:])
+
+
 def lora_train_worker(name, kind, desc, label, steps, fast=False):
     d = lora_dir(name)
     t = LORA_TRAIN[d.name]
@@ -1827,7 +2044,8 @@ def lora_export(name):
 
 
 @app.post("/api/lora/{name}/train")
-def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200), fast: int = Form(0)):
+def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), label: str = Form(""), steps: int = Form(1200), fast: int = Form(0),
+               engine: str = Form("zimage"), preset: str = Form("balanced")):
     d = lora_dir(name)
     if (LORA_TRAIN.get(d.name) or {}).get("state") == "running":
         raise HTTPException(409, "กำลังเทรนอยู่แล้ว")
@@ -1835,7 +2053,16 @@ def lora_train(name: str, kind: str = Form("product"), desc: str = Form(""), lab
     if n < 6:
         raise HTTPException(400, f"ภาพน้อยเกินไป ({n}) — ต้องมีอย่างน้อย 6 ภาพ (แนะนำ 15–40)")
     LORA_TRAIN[d.name] = {"state": "starting", "msg": "กำลังเริ่ม…", "step": 0}
-    threading.Thread(target=lambda: _safe(lora_train_worker, d.name, kind, desc.strip()[:200], label.strip()[:40], int(steps), bool(fast)), daemon=True).start()
+    def run():
+        try:
+            if engine == "klein":
+                lora_train_worker(d.name, kind, desc.strip()[:200], label.strip()[:40], int(steps), bool(fast))
+            else:
+                lora_train_worker_zimage(d.name, kind, desc.strip()[:200], label.strip()[:40], preset if preset in ("fast", "balanced", "quality", "max") else "balanced")
+        except Exception as e:  # noqa
+            LORA_TRAIN[d.name].update(state="error", msg="เทรนไม่สำเร็จ: " + str(e)[:300])
+            print("[lora]", repr(e), flush=True)
+    threading.Thread(target=run, daemon=True).start()
     return {"ok": True}
 
 
