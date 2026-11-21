@@ -1,0 +1,32 @@
+name: server-check
+# Fast guard on every push: the Mac server must at least import (catches NameError/SyntaxError at module level)
+on:
+  push:
+    paths: ["server/**", ".github/workflows/server-check.yml"]
+  workflow_dispatch:
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -q fastapi uvicorn python-multipart pillow numpy huggingface_hub qrcode httpx
+      - name: import server + hit a few routes
+        env: { GENMEDI_HOME: /tmp/gm, HOME: /tmp/gmhome }
+        run: |
+          mkdir -p /tmp/gmhome
+          cd server
+          timeout 120 python - <<'PY'
+          import importlib, sys
+          sys.argv = ["genmedi_server.py"]
+          m = importlib.import_module("genmedi_server")
+          from fastapi.testclient import TestClient
+          c = TestClient(m.app)
+          for path in ("/api/ping", "/api/guard"):
+              r = c.get(path, headers={"host": "localhost"})
+              print(path, r.status_code)
+              assert r.status_code < 500, r.text
+          print("ok")
+          PY

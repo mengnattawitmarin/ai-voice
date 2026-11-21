@@ -739,12 +739,10 @@ def guard_loop():
 threading.Thread(target=guard_loop, daemon=True).start()
 
 
-@app.get("/api/guard")
 def guard_get():
     return GUARD
 
 
-@app.post("/api/guard")
 def guard_set(on: int = Form(1)):
     GUARD["on"] = bool(on)
     if not GUARD["on"]:
@@ -971,6 +969,8 @@ def pair_link():
 
 # ---------------- app ----------------
 app = FastAPI(title="Gen Medi", version=VERSION)
+app.get("/api/guard")(guard_get)
+app.post("/api/guard")(guard_set)
 
 
 def local_request(req: Request):
